@@ -218,7 +218,7 @@ impl Graph {
         if let Some(field) = self.datas.get(id) {
             return Some(field);
         }
-        
+
         if let Some(field) = self.beetween_edges_data.get(id) {
             return Some(field);
         }
@@ -266,6 +266,13 @@ impl Graph {
         self.datas.contains_key(id)
     }
 
+    /// Check if id is node or edge from the 
+    /// whole graph (including subgraph), 
+    /// returns true if node or edge exists, false otherwise
+    pub fn is_exist(&self, id: &Uuid) -> bool {
+        self.is_node(id) || self.is_edge(id)
+    }
+
     /// Check if exist path between source and target
     pub fn is_existing_path(&self, source: &Uuid, target: &Uuid) -> Result<bool, IncorrectTypeError> { 
        unimplemented!()
@@ -274,9 +281,9 @@ impl Graph {
 
     /* ------------ START CONSTRUCTORS ----------- */
 
-    /// Add subgraph at relative `name` path. Walks the parent path
-    /// (all components except the last); the last component is the
-    /// name under which `graph` will be inserted in that parent.
+    /// Walks the parent path (all components except the last); 
+    /// the last component is the name under which `graph` will 
+    /// be inserted in that parent.
     fn add_subgraph(&mut self, name: &PathBuf, graph: Graph) -> Result<(), UnexistentPathError> {
         let mut components = name.iter();
         let subgraph_name = components.next_back().unwrap().to_str().unwrap().to_string();
@@ -297,10 +304,13 @@ impl Graph {
     }
 
     fn __add_node_with_id(&mut self, id: Uuid, field: Field) -> Result<(), NodeAlreadyExistsError> {
-        self.datas.insert(id, field).map_or_else(
-            || Ok(()),
-            |_| Err(NodeAlreadyExistsError(id)),
-        )
+        if self.get_node(&id).is_some() {
+            return Err(NodeAlreadyExistsError(id));
+        
+        }
+        
+        self.datas.insert(id, field);
+        Ok(())
     }
 
     pub fn add_node(&mut self, field: Field) -> Result<Uuid, NodeAlreadyExistsError> {
@@ -313,12 +323,12 @@ impl Graph {
             return Err(AddEdgeError::EdgeAlreadyExists(id));
         }
 
-        if !self.is_node(&source) || !self.is_node(&target) {
+        if !self.is_exist(&source) || !self.is_exist(&target) {
             let mut missing_targets = Vec::new();
-            if !self.is_node(&source) {
+            if !self.is_exist(&source) {
                 missing_targets.push(source);
             }
-            if !self.is_node(&target) {
+            if !self.is_exist(&target) {
                 missing_targets.push(target);
             }
             return Err(AddEdgeError::MissingTargets(MissingTargetsError { missing_targets }));
@@ -521,7 +531,18 @@ mod tests {
 
         #[test]
         fn test_get_edge_beetween_subgraph_and_parent() {
-           unimplemented!()
+            let mut graph = Graph::default();
+            let graph2 = Graph::default();
+            let path = PathBuf::from("subgraph");
+            graph.add_subgraph(&path, graph2).unwrap();
+
+            let field1 = Field::String("node1".to_string());
+            let field2 = Field::String("node2".to_string());
+            let node_id1 = graph.add_node(field1).unwrap();
+            let node_id2 = graph.get_subgraph(&path).unwrap().add_node(field2).unwrap();
+
+            let edge_id = graph.add_edge(node_id1, node_id2).unwrap();
+            assert!(graph.get_edge(&edge_id).is_some());
         }
 
         #[test]
