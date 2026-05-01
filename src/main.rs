@@ -203,6 +203,10 @@ impl Graph {
         neighbours
     }
 
+    pub fn get_outcoming_edges(&self, id: &Uuid) -> Vec<Uuid> {
+        unimplemented!()
+    }
+
     /// Get subgraph by relative path, returns None if subgraph doesn't exist
     pub fn get_subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
         let mut current_graph = self;
@@ -462,17 +466,27 @@ mod tests {
     mod test_constructors_and_getters {
         use super::*;
 
-        #[test]
+        #[test]    
         fn test_get_neighbours_nodes_at_same_lvl() {
+            // Built graph:
+            //  node1 --(edge)--> node2
+            //   |
+            // (edge2)
+            //   |
+            //   ˅
+            //  node3    
             let mut graph = Graph::default();
             let field1 = Field::String("node1".to_string());
             let field2 = Field::String("node2".to_string());
+            let field3 = Field::String("node3".to_string());
             let node_id1 = graph.add_node(field1).unwrap();
             let node_id2 = graph.add_node(field2).unwrap();
+            let node_id3 = graph.add_node(field3).unwrap();
             graph.add_edge(node_id1, node_id2).unwrap();
+            graph.add_edge(node_id1, node_id3).unwrap();
 
             let neighbours = graph.get_neighbours(&node_id1);
-            assert_eq!(neighbours, vec![node_id2]);
+            assert_eq!(neighbours, vec![node_id2, node_id3]);
         }
 
         #[test]
