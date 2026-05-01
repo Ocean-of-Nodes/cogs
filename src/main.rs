@@ -1,15 +1,35 @@
 use std::collections::HashMap;
 use uuid::Uuid;
+use std::path::PathBuf;
 
 type NodeID = Uuid;
 type EdgeID = Uuid;
 type ListernerID = Uuid;
 
-#[derive(Debug, Clone)]
-struct Path(String);
-
-struct AddEdgeError {
+struct NodeAlreadyExistsError(NodeID);
+struct NodeNotFoundError(NodeID);
+struct EdgeNotFoundError(EdgeID);
+struct MissingTargetsError {
     missing_targets: Vec<Uuid>,
+}
+
+enum AddEdgeError {
+    MissingTargets(MissingTargetsError),
+    EdgeAlreadyExists(EdgeID),
+}
+
+enum ApplyDeltaError {
+    EdgeNotFoundError(EdgeNotFoundError),
+    NodeAlreadyExists(NodeAlreadyExistsError),
+    NodeNotFound(NodeNotFoundError),
+    MissingTargetsError(MissingTargetsError),
+    AddEdgeError(AddEdgeError),
+    RetargetError(RetargetError),
+}
+
+enum RetargetError {
+    EdgeNotFound(EdgeID),
+    InvalidTarget(Uuid),
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +52,7 @@ enum ObjectDelta {
     },
     SubObjectDelta {
         /// Path is a slash-separated string representing the path to the nested object
-        path: Path,
+        path: PathBuf,
         delta: Vec<ObjectDelta>,
     },
 }
@@ -111,7 +131,7 @@ struct Graph {
     triplet: Vec<Triplet>,
     datas: HashMap<Uuid, Field>,
     listeners: HashMap<ListernerID, Box<dyn Fn(Patch)>>,
-    subgraphs: HashMap<Path, Graph>,
+    subgraphs: HashMap<PathBuf, Graph>,
 }
 
 impl Graph {
@@ -140,64 +160,105 @@ impl Graph {
     /* ------------ END PROBS -------------------- */
 
     /* ------------ START CONSTRUCTORS ----------- */
-    pub fn add_node(&mut self, field: Field) -> NodeID {
+    fn __add_node_with_id(&mut self, id: Uuid, field: Field) -> Result<(), NodeAlreadyExistsError> {
+        self.datas.insert(id, field).map_or_else(
+            || Ok(()),
+            |_| Err(NodeAlreadyExistsError(id)),
+        )
+    }
+
+    pub fn add_node(&mut self, field: Field) -> Result<(), NodeAlreadyExistsError> {
         let id = Uuid::new_v4();
-        self.datas.insert(id, field);
-        id
+        self.__add_node_with_id(id, field)
+    }
+
+    fn __add_edge_with_id(&mut self, id: Uuid, source: Uuid, target: Uuid) -> Result<(), AddEdgeError> {
+        if self.get_edge(&id).is_some() {
+            return Err(AddEdgeError::EdgeAlreadyExists(id));
+        }
+
+        if !self.is_node(&source) || !self.is_node(&target) {
+            let mut missing_targets = Vec::new();
+            if !self.is_node(&source) {
+                missing_targets.push(source);
+            }
+            if !self.is_node(&target) {
+                missing_targets.push(target);
+            }
+            return Err(AddEdgeError::MissingTargets(MissingTargetsError { missing_targets }));
+        }
+
+        self.triplet.push(Triplet { source, target, edge: id });
+        Ok(())
     }
 
     pub fn add_edge(&mut self, source: Uuid, target: Uuid) -> Result<EdgeID, AddEdgeError> {
         let edge_id = Uuid::new_v4();
-
-        let mut missing_targets = Vec::new();
-        if !self.is_edge(&source) && !self.datas.contains_key(&source) {
-            missing_targets.push(source);
-        }
-        if !self.is_edge(&target) && !self.datas.contains_key(&target) {
-            missing_targets.push(target);
-        }
-        if !missing_targets.is_empty() {
-            return Err(AddEdgeError { missing_targets });
-        }
-
-        self.triplet.push(Triplet {
-            source,
-            target,
-            edge: edge_id,
-        });
+        self.__add_edge_with_id(edge_id, source, target).map(|_| edge_id)?;
         Ok(edge_id)
     }
     /* ------------ END CONSTRUCTORS ------------- */
 
     /* ------------ START DESTRUCTORS ----------- */
-    pub fn remove_node(&mut self, id: &Uuid) -> Option<Field> {
-        self.datas.remove(id)
+    pub fn remove_node(&mut self, id: &Uuid) -> Result<Field, NodeNotFoundError> {
+        self.datas.remove(id).ok_or_else(|| NodeNotFoundError(*id))
     }
 
-    pub fn remove_edge(&mut self, id: &Uuid) -> Option<Triplet> {
+    pub fn remove_edge(&mut self, id: &Uuid) -> Result<Triplet, EdgeNotFoundError> {
         self.triplet
             .iter()
             .position(|triplet| &triplet.edge == id)
             .map(|index| self.triplet.remove(index))
+            .ok_or_else(|| EdgeNotFoundError(*id))
     }
 
     /* ------------ END DESTRUCTORS ------------- */
 
     /* ------------ START MODIFIERS ----------- */
-    pub fn update_node(&mut self, id: &Uuid, field: Field) {
+    pub fn replace_node(&mut self, id: &Uuid, field: Field) -> Result<Field, NodeNotFoundError> {
         unimplemented!()
     }
 
-    pub fn update_edge_data(&mut self, id: &Uuid, field: Field) {
+    pub fn update_edge_data(&mut self, id: &Uuid, field: Field) -> Result<(), EdgeNotFoundError> {
         unimplemented!()
     }
 
-    pub fn retraget_edge(&mut self, id: &Uuid, new_target: RetrargetEdge) {
+    pub fn retraget_edge(&mut self, id: &Uuid, new_target: RetrargetEdge) -> Result<(), RetargetError> {
         unimplemented!()
     }
 
-    pub fn apply_delta(&mut self, id: &Uuid, delta: Patch) {
-        unimplemented!()
+    pub fn apply_delta(&mut self, id: &Uuid, delta: Patch) -> Result<(), ApplyDeltaError> {
+        match delta {
+            Patch::AddNode { id, field } => {
+                self.__add_node_with_id(id, field).map_err(|e| ApplyDeltaError::NodeAlreadyExists(e))
+            }
+            Patch::RemoveNode { id } => {
+                self.remove_node(&id)
+                    .map(|_| ())
+                    .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
+            }
+            Patch::ReplaceNode { id, field } => {
+                self.replace_node(&id, field)
+                    .map(|_| ())
+                    .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
+            }
+            Patch::ChangeNode { id, delta} => {
+                unimplemented!()
+            },
+            Patch::AddEdge { id, source, target } => {
+                self.__add_edge_with_id(id, source, target)
+                    .map_err(|e| ApplyDeltaError::AddEdgeError(e))
+            }
+            Patch::RemoveEdge { id } => {
+                 self.remove_edge(&id)
+                    .map(|_| ())
+                    .map_err(|_| ApplyDeltaError::EdgeNotFoundError(EdgeNotFoundError(id)))
+            }
+            Patch::RetrargetEdge { id, new_target } => {
+                 self.retraget_edge(&id, new_target)
+                    .map_err(|e| ApplyDeltaError::RetargetError(e))
+            }
+        }
     }
     /* ------------ END MODIFIERS ------------- */
 

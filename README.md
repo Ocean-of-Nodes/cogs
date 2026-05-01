@@ -16,7 +16,7 @@ The next important point is how to ensure modularity? In programming, we usually
 
 So, in principle, a reducer that takes a graph as a parameter and returns a graph seems like a good solution. Continuing the analysis, any reducer can be viewed as a pattern match (a graph isomorphism between a pattern and a part of a graph) and a rewrite of a section of a graph with another graph. And any algorithm can be viewed as a sequence of such rewrite rules. This is a behavioral pattern, in turn, the graph data is the data contract.
 
-Additionally, reducers can be divided into hot and cold. A hot reducer operates on a push-data principle; execution occurs as soon as the data is available. This is what's called a materialized view. The returned graph is updated with delta patches. In principle, the reducer is not required to return any delta patch graph and can write data directly to the global graph.
+Additionally, reducers can be divided into hot and cold. A hot reducer operates on a push-data principle; execution occurs as soon as the data is available. This is what's called a materialized view. The returned graph is updated with delta patches (so yep it is persistent db). In principle, the reducer is not required to return any delta patch graph and can write data directly to the global graph.
 A cold reducer, also called a subroutine, returns a patch when manually called again.
 
 Regarding reducers, the database here follows the logic of spacetimedb and stores the code compiled in wasm directly in the database itself.
