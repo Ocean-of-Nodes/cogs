@@ -140,6 +140,7 @@ impl Graph {
     }
     /* ------------ END MODIFIERS ------------- */
 
+    /* ------------ START LISTENERS ----------- */
     fn notify_listeners(&self, patch: Patch) {
         for listener in self.listeners.values() {
             listener(patch.clone());
@@ -155,6 +156,7 @@ impl Graph {
     pub fn unsubscribe_on_change(&mut self, id: ListernerID) {
         self.listeners.remove(&id);
     }
+    /* ------------ END LISTENERS ------------- */
 }
 
 fn main() {
