@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use std::path::PathBuf;
 
+type EntityId = Uuid;
 type NodeID = Uuid;
 type EdgeID = Uuid;
 type ListernerID = Uuid;
@@ -154,7 +155,7 @@ struct Graph {
     ///  node2             node4
     edges: Vec<Triplet>,
     /// Storage for data of nodes and edges at same level.
-    datas: HashMap<Uuid, Field>,
+    entities: HashMap<Uuid, Field>,
     
     /// Edges beetween subgraphs and parent graph 
     /// or beetween subgraphs, regardless level for example
@@ -174,26 +175,23 @@ struct Graph {
 impl Graph {
     /* ------------ START GETTERS ------------------- */
 
-    /// Get all neighbours (node or edges) of node with id, 
-    /// including nodes from subgraphs and edges beetween subgraphs 
-    /// and parent graph,
-    pub fn get_neighbours(&self, id: &Uuid) -> Vec<Uuid> {
+    /// Get all neighbours (entities) of entity with id
+    pub fn get_neighbours(&self, id: &EntityId) -> Vec<EntityId> {
         let mut neighbours = Vec::new();
-        for triplet in self.edges.iter() {
-            if &triplet.source == id {
-                neighbours.push(triplet.target);
-            } else if &triplet.target == id {
-                neighbours.push(triplet.source);
+        let collect = |triplets: &[Triplet], neighbours: &mut Vec<EntityId>| {
+            for triplet in triplets.iter() {
+                if &triplet.source == id {
+                    neighbours.push(triplet.target);
+                } else if &triplet.target == id {
+                    neighbours.push(triplet.source);
+                } else if &triplet.edge == id {
+                    neighbours.push(triplet.source);
+                    neighbours.push(triplet.target);
+                }
             }
-        }
-
-        for triplet in self.beetween_edges.iter() {
-            if &triplet.source == id {
-                neighbours.push(triplet.target);
-            } else if &triplet.target == id {
-                neighbours.push(triplet.source);
-            }
-        }
+        };
+        collect(&self.edges, &mut neighbours);
+        collect(&self.beetween_edges, &mut neighbours);
 
         for graph in self.subgraphs.values() {
             let subgraph_neighbours = graph.get_neighbours(id);
@@ -203,7 +201,7 @@ impl Graph {
         neighbours
     }
 
-    pub fn get_outcoming_edges(&self, id: &Uuid) -> Vec<Uuid> {
+    pub fn get_outcoming_edges(&self, id: &EntityId) -> Vec<EdgeID> {
         unimplemented!()
     }
 
@@ -219,7 +217,7 @@ impl Graph {
     /// Get node by id from the whole graph (including subgraphs), 
     /// returns None if node doesn't exist
     pub fn get_node(&self, id: &Uuid) -> Option<&Field> {
-        if let Some(field) = self.datas.get(id) {
+        if let Some(field) = self.entities.get(id) {
             return Some(field);
         }
 
@@ -267,7 +265,7 @@ impl Graph {
     /// Check if id is node (including subgraph), returns true
     /// if node exists, false otherwise
     pub fn is_node(&self, id: &Uuid) -> bool {
-        if self.datas.contains_key(id) {
+        if self.entities.contains_key(id) {
             return true;
         }
         self.subgraphs.values().any(|g| g.is_node(id))
@@ -316,7 +314,7 @@ impl Graph {
         
         }
         
-        self.datas.insert(id, field);
+        self.entities.insert(id, field);
         Ok(())
     }
 
@@ -344,9 +342,9 @@ impl Graph {
         }
 
         let triplet = Triplet { source, target, edge: id };
-        let source_local = self.datas.contains_key(&source)
+        let source_local = self.entities.contains_key(&source)
             || self.edges.iter().any(|t| t.edge == source);
-        let target_local = self.datas.contains_key(&target)
+        let target_local = self.entities.contains_key(&target)
             || self.edges.iter().any(|t| t.edge == target);
         if source_local && target_local {
             self.edges.push(triplet);
@@ -365,7 +363,7 @@ impl Graph {
 
     /* ------------ START DESTRUCTORS ----------- */
     pub fn remove_node(&mut self, id: &Uuid) -> Result<Field, NodeNotFoundError> {
-        self.datas.remove(id).ok_or_else(|| NodeNotFoundError(*id))
+        self.entities.remove(id).ok_or_else(|| NodeNotFoundError(*id))
     }
 
     pub fn remove_edge(&mut self, id: &Uuid) -> Result<Triplet, EdgeNotFoundError> {
@@ -470,12 +468,15 @@ mod tests {
         fn test_get_neighbours_nodes_at_same_lvl() {
             // Built graph:
             //  node1 --(edge)--> node2
+            //   ^
             //   |
             // (edge2)
             //   |
-            //   ˅
-            //  node3    
+            //  node3  
+            //  
+            // Expected result: [node2, node3]
             let mut graph = Graph::default();
+
             let field1 = Field::String("node1".to_string());
             let field2 = Field::String("node2".to_string());
             let field3 = Field::String("node3".to_string());
@@ -483,7 +484,7 @@ mod tests {
             let node_id2 = graph.add_node(field2).unwrap();
             let node_id3 = graph.add_node(field3).unwrap();
             graph.add_edge(node_id1, node_id2).unwrap();
-            graph.add_edge(node_id1, node_id3).unwrap();
+            graph.add_edge(node_id3, node_id1).unwrap();
 
             let neighbours = graph.get_neighbours(&node_id1);
             assert_eq!(neighbours, vec![node_id2, node_id3]);
@@ -491,7 +492,16 @@ mod tests {
 
         #[test]
         fn test_get_neighbours_edges_at_same_lvl() {
-           let mut graph = Graph::default();
+            // Built graph:
+            //  node1 --(edge1)--> node2
+            //            |
+            //          (edge3)
+            //            |
+            //            v
+            //  node3 --(edge2)--> node4
+            //  
+            // Expected result: [edge1, edge2]
+            let mut graph = Graph::default();
 
             let field1 = Field::String("node1".to_string());
             let field2 = Field::String("node2".to_string());
@@ -506,6 +516,7 @@ mod tests {
             let edge2 = graph.add_edge(node_id3, node_id4).unwrap();
 
             let edge3 = graph.add_edge(edge1, edge2).unwrap();
+            
             let neighbours = graph.get_neighbours(&edge3);
             assert_eq!(neighbours, vec![edge1, edge2]);
         }
