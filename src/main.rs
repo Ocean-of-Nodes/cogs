@@ -5,6 +5,9 @@ type NodeID = Uuid;
 type EdgeID = Uuid;
 type ListernerID = Uuid;
 
+#[derive(Debug, Clone)]
+struct Path(String);
+
 struct AddEdgeError {
     missing_targets: Vec<Uuid>,
 }
@@ -28,8 +31,8 @@ enum ObjectDelta {
         added_fields: Vec<(usize, Field)>,
     },
     SubObjectDelta {
-        // path is a slash-separated string representing the path to the nested object
-        path: String,
+        /// Path is a slash-separated string representing the path to the nested object
+        path: Path,
         delta: Vec<ObjectDelta>,
     },
 }
@@ -49,11 +52,12 @@ enum Patch {
     RemoveNode {
         id: Uuid,
     },
-    // When field fundamental type replaced
+    /// When field fundamental type replaced
     ReplaceNode {
         id: Uuid,
         field: Field,
     },
+    /// Diff for object node, contains list of changes in fields
     ChangeNode {
         id: Uuid,
         delta: Vec<ObjectDelta>,
@@ -107,6 +111,7 @@ struct Graph {
     triplet: Vec<Triplet>,
     datas: HashMap<Uuid, Field>,
     listeners: HashMap<ListernerID, Box<dyn Fn(Patch)>>,
+    subgraphs: HashMap<Path, Graph>,
 }
 
 impl Graph {
@@ -187,11 +192,11 @@ impl Graph {
         unimplemented!()
     }
 
-    pub fn update_edge_source(&mut self, id: &Uuid, source: Uuid) {
+    pub fn retraget_edge(&mut self, id: &Uuid, new_target: RetrargetEdge) {
         unimplemented!()
     }
 
-    pub fn update_edge_target(&mut self, id: &Uuid, target: Uuid) {
+    pub fn apply_delta(&mut self, id: &Uuid, delta: Patch) {
         unimplemented!()
     }
     /* ------------ END MODIFIERS ------------- */
