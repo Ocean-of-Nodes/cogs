@@ -337,6 +337,42 @@ mod tests {
             assert!(graph.get_edge(&edge_id).is_some());
         }
     }
+
+    mod test_probs {
+        use super::*;
+
+        #[test]
+        fn test_is_node_and_is_edge() {
+            let mut graph = Graph::default();
+            let field = Field::String("test".to_string());
+            let node_id = graph.add_node(field).unwrap();
+            assert!(graph.is_node(&node_id));
+            assert!(!graph.is_edge(&node_id));
+
+            let edge_id = graph.add_edge(node_id, node_id).unwrap();
+            assert!(graph.is_edge(&edge_id));
+        }
+
+        #[test]
+        fn test_is_existing_path() {
+            let mut graph = Graph::default();
+            let field1 = Field::String("node1".to_string());
+            let field2 = Field::String("node2".to_string());
+            let node_id1 = graph.add_node(field1).unwrap();
+            let node_id2 = graph.add_node(field2).unwrap();
+            graph.add_edge(node_id1, node_id2).unwrap();
+            
+            let field3 = Field::String("node3".to_string());
+            let field4 = Field::String("node4".to_string());
+            let node_id3 = graph.add_node(field3).unwrap();
+            let node_id4 = graph.add_node(field4).unwrap();
+            graph.add_edge(node_id3, node_id4).unwrap();
+
+            graph.add_edge(node_id1, node_id4).unwrap();
+
+            assert!(graph.is_existing_path(&node_id3, &node_id2));
+        }
+    }
 }
 
 fn main() {
