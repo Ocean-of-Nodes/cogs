@@ -1,29 +1,29 @@
-# Engine
+# The Future of Language Tools
 
-The main current goal of the project development of Universal General Representation. 
-For replacement dissimilar internal api of rust analyzer. 
+![Lego](image.png)
 
-### Motivation 
+Before talking about programming languages, I'd like to take a break and talk about performance and data management complexity in general.
 
+Let's start with games. These apps were the first to encounter the performance problem. The answer to this was DOD (Data-Oriented Design) and the ECS (Entity Component System) paradigm that was born after it. After some time, the authors of Flecs ECS put forward the following idea: in essence, we are designing an in-memory relational database. Although, of course, ECS is not just a database, but still certain design patterns (for example, concurrent code execution by constructing an acyclic graph of system and data dependencies).
 
-### Development agreements
+So, why are we turning to DOD, and ECS in particular? The answer is data and performance control in the era of the decline of Moore's Law.
 
-We must strive to cover the current capabilities of the rast analyzer.
-The main goal is to get a convenient external API and to satisfy the functionality requirements. The internals here and there can be ugly and bizarre.
-This is required to move to the stage of integration and discussion.
+### Design
 
-### Road map
-- Top level query builder for Gremlin dialect 
-- mm-adt as internal language 
-- MLIR backend
-- Integration with RA 
+Returning to the question of databases and language tools. Unlike ECS where data regular language tools have irregular data structures. Regularity arises naturally from control flow, name resolution, and type resolution. This is the first difference. So the storage must be smart enough, code-aware like JIT, to make informed decisions about managing data placement.
 
-### Long-term goals
-- GPU acceleration
-- Pluggable storages
-- Materialized view
+The next important point is how to ensure modularity? In programming, we usually use structural contracts (we introduce named fields of data structures) and behavioral contracts (for example, one function is called before another) as a point of modularity. That's all folks. 
 
-### Long term prospects
+So, in principle, a reducer that takes a graph as a parameter and returns a graph seems like a good solution. Continuing the analysis, any reducer can be viewed as a pattern match (a graph isomorphism between a pattern and a part of a graph) and a rewrite of a section of a graph with another graph. And any algorithm can be viewed as a sequence of such rewrite rules. This is a behavioral pattern, in turn, the graph data is the data contract.
+
+Additionally, reducers can be divided into hot and cold. A hot reducer operates on a push-data principle; execution occurs as soon as the data is available. This is what's called a materialized view. The returned graph is updated with delta patches. In principle, the reducer is not required to return any delta patch graph and can write data directly to the global graph.
+A cold reducer, also called a subroutine, returns a patch when manually called again.
+
+Regarding reducers, the database here follows the logic of spacetimedb and stores the code compiled in wasm directly in the database itself.
+
+Now a little about the query dialect. 
+
+### What can be achieved with such a database?
 - Using as a starting point as a single uniform representation for unioning rust compiler and analyzer
 - As an external api for any kind of RA or compiler plugins
 
