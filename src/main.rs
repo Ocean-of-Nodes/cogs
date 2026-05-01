@@ -10,11 +10,67 @@ struct AddEdgeError {
 }
 
 #[derive(Debug, Clone)]
+enum ObjectDelta {
+    AddField {
+        name: String,
+        field: Field,
+    },
+    RemoveField {
+        name: String,
+    },
+    ReplaceField {
+        name: String,
+        field: Field,
+    },
+    ArrayDelta {
+        name: String,
+        removed_indices: Vec<usize>,
+        added_fields: Vec<(usize, Field)>,
+    },
+    SubObjectDelta {
+        // path is a slash-separated string representing the path to the nested object
+        path: String,
+        delta: Vec<ObjectDelta>,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum RetrargetEdge {
+    Source(Uuid),
+    Target(Uuid),
+}
+
+#[derive(Debug, Clone)]
 enum Patch {
-    AddNode { id: Uuid, field: Field },
-    AddEdge { id: Uuid, source: Uuid, target: Uuid },
-    RemoveNode { id: Uuid },
-    RemoveEdge { id: Uuid },
+    AddNode {
+        id: Uuid,
+        field: Field,
+    },
+    RemoveNode {
+        id: Uuid,
+    },
+    // When field fundamental type replaced
+    ReplaceNode {
+        id: Uuid,
+        field: Field,
+    },
+    ChangeNode {
+        id: Uuid,
+        delta: Vec<ObjectDelta>,
+    },
+
+    AddEdge {
+        id: Uuid,
+        source: Uuid,
+        target: Uuid,
+    },
+    RemoveEdge {
+        id: Uuid,
+    },
+    RetrargetEdge {
+        id: Uuid,
+        new_target: RetrargetEdge,
+    },
 }
 
 #[derive(Debug, Clone)]
