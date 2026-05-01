@@ -260,10 +260,13 @@ impl Graph {
         self.edges.iter().any(|triplet| &triplet.edge == id)
     }
 
-    /// Check if id is node (including subgraph), returns true 
+    /// Check if id is node (including subgraph), returns true
     /// if node exists, false otherwise
     pub fn is_node(&self, id: &Uuid) -> bool {
-        self.datas.contains_key(id)
+        if self.datas.contains_key(id) {
+            return true;
+        }
+        self.subgraphs.values().any(|g| g.is_node(id))
     }
 
     /// Check if id is node or edge from the 
@@ -323,18 +326,29 @@ impl Graph {
             return Err(AddEdgeError::EdgeAlreadyExists(id));
         }
 
-        if !self.is_exist(&source) || !self.is_exist(&target) {
+        let source_exists = self.is_exist(&source);
+        let target_exists = self.is_exist(&target);
+        if !source_exists || !target_exists {
             let mut missing_targets = Vec::new();
-            if !self.is_exist(&source) {
+            if !source_exists {
                 missing_targets.push(source);
             }
-            if !self.is_exist(&target) {
+            if !target_exists {
                 missing_targets.push(target);
             }
             return Err(AddEdgeError::MissingTargets(MissingTargetsError { missing_targets }));
         }
 
-        self.edges.push(Triplet { source, target, edge: id });
+        let triplet = Triplet { source, target, edge: id };
+        let source_local = self.datas.contains_key(&source)
+            || self.edges.iter().any(|t| t.edge == source);
+        let target_local = self.datas.contains_key(&target)
+            || self.edges.iter().any(|t| t.edge == target);
+        if source_local && target_local {
+            self.edges.push(triplet);
+        } else {
+            self.beetween_edges.push(triplet);
+        }
         Ok(())
     }
 
