@@ -6,18 +6,24 @@ type NodeID = Uuid;
 type EdgeID = Uuid;
 type ListernerID = Uuid;
 
+#[derive(Debug)]
 struct NodeAlreadyExistsError(NodeID);
+#[derive(Debug)]
 struct NodeNotFoundError(NodeID);
+#[derive(Debug)]
 struct EdgeNotFoundError(EdgeID);
+#[derive(Debug)]
 struct MissingTargetsError {
     missing_targets: Vec<Uuid>,
 }
 
+#[derive(Debug)]
 enum AddEdgeError {
     MissingTargets(MissingTargetsError),
     EdgeAlreadyExists(EdgeID),
 }
 
+#[derive(Debug)]
 enum ApplyDeltaError {
     EdgeNotFoundError(EdgeNotFoundError),
     NodeAlreadyExists(NodeAlreadyExistsError),
@@ -25,11 +31,16 @@ enum ApplyDeltaError {
     MissingTargetsError(MissingTargetsError),
     AddEdgeError(AddEdgeError),
     RetargetError(RetargetError),
+    FieldDoesntObject {
+        node_id: NodeID,
+        actual_type: String,
+    },
 }
 
+#[derive(Debug)]
 enum RetargetError {
     EdgeNotFound(EdgeID),
-    InvalidTarget(Uuid),
+    InvalidTarget(RetrargetEdge),
 }
 
 #[derive(Debug, Clone)]
@@ -97,8 +108,8 @@ enum Patch {
     },
 }
 
-#[derive(Debug, Clone)]
-enum Field {
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum Field {
     // Composite types
     Array(Vec<Field>),
     Object(HashMap<String, Field>),
@@ -167,9 +178,9 @@ impl Graph {
         )
     }
 
-    pub fn add_node(&mut self, field: Field) -> Result<(), NodeAlreadyExistsError> {
+    pub fn add_node(&mut self, field: Field) -> Result<Uuid, NodeAlreadyExistsError> {
         let id = Uuid::new_v4();
-        self.__add_node_with_id(id, field)
+        self.__add_node_with_id(id, field).map(|_| id)
     }
 
     fn __add_edge_with_id(&mut self, id: Uuid, source: Uuid, target: Uuid) -> Result<(), AddEdgeError> {
@@ -219,7 +230,7 @@ impl Graph {
         unimplemented!()
     }
 
-    pub fn update_edge_data(&mut self, id: &Uuid, field: Field) -> Result<(), EdgeNotFoundError> {
+    pub fn replace_edge_data(&mut self, id: &Uuid, field: Field) -> Result<(), EdgeNotFoundError> {
         unimplemented!()
     }
 
@@ -243,6 +254,21 @@ impl Graph {
                     .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
             }
             Patch::ChangeNode { id, delta} => {
+                // self.get_node(&id)
+                //     .ok_or_else(|| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
+                //     .and_then(|field| {
+                //         if let Field::Object(ref mut obj) = field {
+                //             // for change in delta {
+                //             //    unimplemented!()
+                //             // }
+                //             unimplemented!()
+                //         } else {
+                //             Err(ApplyDeltaError::FieldDoesntObject {
+                //                 node_id: id,
+                //                 actual_type: format!("{:?}", field),
+                //             })
+                //         }
+                //     })
                 unimplemented!()
             },
             Patch::AddEdge { id, source, target } => {
@@ -279,6 +305,38 @@ impl Graph {
         self.listeners.remove(&id);
     }
     /* ------------ END LISTENERS ------------- */
+}
+
+mod tests {
+    use super::*;
+
+    mod test_constructors_and_getters {
+        use super::*;
+
+        #[test]
+        fn test_add_node() {
+            let mut graph = Graph::default();
+            let field = Field::String("test".to_string());
+            let result = graph.add_node(field.clone());
+            assert!(result.is_ok());
+            let node_id = result.unwrap();
+            assert_eq!(graph.get_node(&node_id), Some(&field));
+        }
+
+        #[test]
+        fn test_add_edge() {
+            let mut graph = Graph::default();
+            let field1 = Field::String("node1".to_string());
+            let field2 = Field::String("node2".to_string());
+            let node_id1 = graph.add_node(field1).unwrap();
+            let node_id2 = graph.add_node(field2).unwrap();
+
+            let edge_result = graph.add_edge(node_id1, node_id2);
+            assert!(edge_result.is_ok());
+            let edge_id = edge_result.unwrap();
+            assert!(graph.get_edge(&edge_id).is_some());
+        }
+    }
 }
 
 fn main() {
