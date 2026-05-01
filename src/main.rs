@@ -174,15 +174,40 @@ struct Graph {
 impl Graph {
     /* ------------ START GETTERS ------------------- */
 
-    /// Get subgraph by path, returns None if subgraph doesn't exist
+    /// Get all neighbours (node or edges) of node with id, 
+    /// including nodes from subgraphs and edges beetween subgraphs 
+    /// and parent graph,
+    pub fn get_neighbours(&self, id: &Uuid) -> Vec<Uuid> {
+        let mut neighbours = Vec::new();
+        for triplet in self.edges.iter() {
+            if &triplet.source == id {
+                neighbours.push(triplet.target);
+            } else if &triplet.target == id {
+                neighbours.push(triplet.source);
+            }
+        }
+
+        for triplet in self.beetween_edges.iter() {
+            if &triplet.source == id {
+                neighbours.push(triplet.target);
+            } else if &triplet.target == id {
+                neighbours.push(triplet.source);
+            }
+        }
+
+        for graph in self.subgraphs.values() {
+            let subgraph_neighbours = graph.get_neighbours(id);
+            neighbours.extend(subgraph_neighbours);
+        }
+
+        neighbours
+    }
+
+    /// Get subgraph by relative path, returns None if subgraph doesn't exist
     pub fn get_subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
         let mut current_graph = self;
         for chank in path.iter() {
-            if let Some(subgraph) = current_graph.subgraphs.get_mut(chank.to_str()?) {
-                current_graph = subgraph;
-            } else {
-                return None;
-            }
+            current_graph = current_graph.subgraphs.get_mut(chank.to_str()?)?;
         }
         Some(current_graph)
     }
@@ -190,8 +215,14 @@ impl Graph {
     /// Get node by id from the whole graph (including subgraphs), 
     /// returns None if node doesn't exist
     pub fn get_node(&self, id: &Uuid) -> Option<&Field> {
-        self.datas.get(id);
-        self.beetween_edges_data.get(id);
+        if let Some(field) = self.datas.get(id) {
+            return Some(field);
+        }
+        
+        if let Some(field) = self.beetween_edges_data.get(id) {
+            return Some(field);
+        }
+
         for graph in self.subgraphs.values() {
             if let Some(field) = graph.get_node(id) {
                 return Some(field);
@@ -236,29 +267,33 @@ impl Graph {
     }
 
     /// Check if exist path between source and target
-    pub fn is_existing_path(&self, source: &Uuid, target: &Uuid) -> Result<bool, IncorrectTypeError> {
-        if !self.is_node(source) {
-            return Err(IncorrectTypeError {
-                node_id: *source,
-                actual_type: "Node".into(),
-                expected_type: "Subgraph".into(),
-            });
-        }
-        if !self.is_node(target) {
-            return Err(IncorrectTypeError {
-                node_id: *target,
-                actual_type: "Node".into(),
-                expected_type: "Subgraph".into(),
-            });
-        }
-       
+    pub fn is_existing_path(&self, source: &Uuid, target: &Uuid) -> Result<bool, IncorrectTypeError> { 
        unimplemented!()
     }
     /* ------------ END PROBS -------------------- */
 
     /* ------------ START CONSTRUCTORS ----------- */
+
+    /// Add subgraph at relative `name` path. Walks the parent path
+    /// (all components except the last); the last component is the
+    /// name under which `graph` will be inserted in that parent.
     fn add_subgraph(&mut self, name: &PathBuf, graph: Graph) -> Result<(), UnexistentPathError> {
-        unimplemented!()
+        let mut components = name.iter();
+        let subgraph_name = components.next_back().unwrap().to_str().unwrap().to_string();
+
+        let mut current_graph = self;
+        let mut current_path = PathBuf::new();
+        for chank in components {
+            let key = chank.to_str().unwrap();
+            if let Some(subgraph) = current_graph.subgraphs.get_mut(key) {
+                current_graph = subgraph;
+                current_path.push(chank);
+            } else {
+                return Err(UnexistentPathError { valid_path_part: current_path });
+            }
+        }
+        current_graph.subgraphs.insert(subgraph_name, graph);
+        Ok(())
     }
 
     fn __add_node_with_id(&mut self, id: Uuid, field: Field) -> Result<(), NodeAlreadyExistsError> {
@@ -404,6 +439,40 @@ mod tests {
         use super::*;
 
         #[test]
+        fn test_get_neighbours_nodes_at_same_lvl() {
+            let mut graph = Graph::default();
+            let field1 = Field::String("node1".to_string());
+            let field2 = Field::String("node2".to_string());
+            let node_id1 = graph.add_node(field1).unwrap();
+            let node_id2 = graph.add_node(field2).unwrap();
+            graph.add_edge(node_id1, node_id2).unwrap();
+
+            let neighbours = graph.get_neighbours(&node_id1);
+            assert_eq!(neighbours, vec![node_id2]);
+        }
+
+        #[test]
+        fn test_get_neighbours_edges_at_same_lvl() {
+           let mut graph = Graph::default();
+
+            let field1 = Field::String("node1".to_string());
+            let field2 = Field::String("node2".to_string());
+            let node_id1 = graph.add_node(field1).unwrap();
+            let node_id2 = graph.add_node(field2).unwrap();
+            let edge1 = graph.add_edge(node_id1, node_id2).unwrap();
+
+            let field3 = Field::String("node3".to_string());
+            let field4 = Field::String("node4".to_string());
+            let node_id3 = graph.add_node(field3).unwrap();
+            let node_id4 = graph.add_node(field4).unwrap();
+            let edge2 = graph.add_edge(node_id3, node_id4).unwrap();
+
+            let edge3 = graph.add_edge(edge1, edge2).unwrap();
+            let neighbours = graph.get_neighbours(&edge3);
+            assert_eq!(neighbours, vec![edge1, edge2]);
+        }
+
+        #[test]
         fn test_add_node() {
             let mut graph = Graph::default();
             let field = Field::String("test".to_string());
@@ -428,19 +497,14 @@ mod tests {
         }
         
         #[test]
-        fn test_get_neighbours() {
-            unimplemented!()
-        }
-
-        #[test]
         fn test_create_subgraph_and_get_it() {
             let mut graph = Graph::default();
             let graph2 = Graph::default();
             let graph3 = Graph::default();
-            let mut path = PathBuf::from("/subgraph1");
-            graph.add_subgraph(&path, graph2);
+            let mut path = PathBuf::from("subgraph1");
+            graph.add_subgraph(&path, graph2).unwrap();
             path.push("subgraph2");
-            graph.add_subgraph(&path, graph3);
+            graph.add_subgraph(&path, graph3).unwrap();
             assert!(graph.get_subgraph(&path).is_some());
         }
 
@@ -448,8 +512,8 @@ mod tests {
         fn test_get_node_from_subgraph() {
             let mut graph = Graph::default();
             let graph2 = Graph::default();
-            let path = PathBuf::from("/subgraph");
-            graph.add_subgraph(&path, graph2);
+            let path = PathBuf::from("subgraph");
+            graph.add_subgraph(&path, graph2).unwrap();
             let field = Field::String("test".to_string());
             let node_id = graph.get_subgraph(&path).unwrap().add_node(field.clone()).unwrap();
             assert_eq!(graph.get_subgraph(&path).unwrap().get_node(&node_id), Some(&field));
