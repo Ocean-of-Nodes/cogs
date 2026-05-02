@@ -174,12 +174,26 @@ struct Graph {
 
 impl Graph {
     pub fn global_entities(&self) -> impl Iterator<Item = EntityId> {
-        self.edges
+        let local_edges = self
+            .edges
             .iter()
-            .flat_map(|edge| [edge.id, edge.source, edge.target])
-            .chain(self.entities.keys().copied())
-            .collect::<HashSet<_>>()
-            .into_iter()
+            .flat_map(|edge| [edge.id, edge.source, edge.target]);
+        let beetween = self
+            .beetween_edges
+            .iter()
+            .flat_map(|edge| [edge.id, edge.source, edge.target]);
+        let mut iter: Box<dyn Iterator<Item = EntityId>> = Box::new(
+            local_edges
+                .chain(beetween)
+                .chain(self.entities.keys().copied())
+                .chain(self.beetween_edges_entities.keys().copied()),
+        );
+
+        for subgraph in self.subgraphs.values() {
+            iter = Box::new(iter.chain(subgraph.global_entities()));
+        }
+
+        iter.collect::<HashSet<_>>().into_iter()
     }
 
     pub fn global_edges(&self) -> impl Iterator<Item = EdgeID> {
