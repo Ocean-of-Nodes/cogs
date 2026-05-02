@@ -280,8 +280,48 @@ impl Graph {
         unimplemented!()
     }
 
-    /// Get all neighbours nodes of entity with id
-    pub fn neighbours(&self, id: &EntityId) -> Result<Vec<NodeId>, EntityNotFoundError> {
+    /// Returns the entities directly connected to `id` — that is,
+    /// for every edge incident to `id`, the **other** endpoint.
+    ///
+    /// The edges themselves are **not** part of the result. They are
+    /// the *paths* along which neighbours are reached, not the
+    /// destinations. To retrieve the incident edges, use
+    /// [`Graph::edges`].
+    ///
+    /// ```text
+    ///   neighbours(n1) = [n2, n3]
+    ///
+    ///        n2 ----(e1)---- n1 ----(e2)---- n3
+    ///        ^                ^                ^
+    ///        |                |                |
+    ///     returned         queried          returned
+    ///
+    ///        (e1) and (e2) are NOT in the result —
+    ///        they are the connections, not the neighbours.
+    /// ```
+    ///
+    /// `id` may itself be an edge. In that case the result contains
+    /// entities reached via *incident meta-edges*, but never the
+    /// `source` / `target` of the edge `id` itself:
+    ///
+    /// ```text
+    ///   n1 ----(e1)---- n2
+    ///           |
+    ///          (e3)         e3 is a meta-edge with
+    ///           |           endpoints e1 and e2.
+    ///   n3 ----(e2)---- n4
+    /// ```
+    ///
+    /// `neighbours(e1) = [e2]` — `e3` is incident to `e1`, and its
+    /// *other* endpoint is `e2`. `n1` and `n2` are **not** in the
+    /// result: they are `e1`'s own endpoints, not entities reached
+    /// *via* another edge incident to `e1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityNotFoundError`] if `id` does not exist
+    /// anywhere in this graph or its subgraphs.
+    pub fn neighbours(&self, id: &EntityId) -> Result<Vec<EntityId>, EntityNotFoundError> {
         if !self.is_exist(id) {
             return Err(EntityNotFoundError(*id));
         }
@@ -744,13 +784,14 @@ mod tests {
         #[test]
         fn test_get_neighbours_1() {
             // Built graph:
+            // ```text
             //  node1 --(edge)--> node2
             //   ^
             //   |
             // (edge2)
             //   |
             //  node3
-            //
+            // ```
             let mut graph = Graph::default();
 
             let field1 = Field::String("node1".to_string());
@@ -774,13 +815,14 @@ mod tests {
         #[test]
         fn test_get_neighbours_2() {
             // Built graph:
+            // ```text
             //  node1 --(edge1)--> node2
             //            |
             //          (edge3) < -- (edge4) -- node5
             //            |
             //            v
             //  node3 --(edge2)--> node4
-            //
+            // ```
             let mut graph = Graph::default();
 
             let field1 = Field::String("node1".to_string());
@@ -812,13 +854,14 @@ mod tests {
         #[test]
         fn test_get_edges_1() {
             // Built graph:
+            // ```text
             //  node1 --(edge)--> node2
             //   ^
             //   |
             // (edge2)
             //   |
             //  node3
-            //
+            // ````
             let mut graph = Graph::default();
 
             let field1 = Field::String("node1".to_string());
