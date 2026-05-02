@@ -1,5 +1,3 @@
-mod client;
-
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -1074,6 +1072,3 @@ mod tests {
     }
 }
 
-fn main() {
-    println!("Hello, world!");
-}
