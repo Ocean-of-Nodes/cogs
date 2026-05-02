@@ -234,7 +234,51 @@ impl Graph {
         iter
     }
 
+    /// Get subgraph by path, returns None if subgraph doesn't exist
+    pub fn subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
+        let mut current_graph = self;
+        for chank in path.iter() {
+            current_graph = current_graph.subgraphs.get_mut(chank.to_str()?)?;
+        }
+        Some(current_graph)
+    }
+
     /* ------------ START GETTERS ------------------- */
+
+    /// `Sheave` is a bunch of `links` between two `Graph`s.
+    ///
+    /// A sheave bundles cross-graph edges (and any meta-edges built
+    /// on top of them) into a single object that lives outside the
+    /// two graphs it connects.
+    ///
+    /// ```text
+    /// +---- lhs graph ----+                +---- rhs graph ----+
+    /// |                   |                |                   |
+    /// |  n1 ---(a)--- n2  |                |  m1 ---(x)--- m2  |
+    /// |         |         |                |         |         |
+    /// |        (b)        |                |        (y)        |
+    /// |         |         |                |         |         |
+    /// |         n3        |                |         m3        |
+    /// |                   |                |                   |
+    /// +-------------------+                +-------------------+
+    ///          :                                    :
+    ///          :   n2 ----(L1)---------------- m1   :
+    ///          :              ^                     :
+    ///          :             (M)  <- meta-edge      :
+    ///          :              v                     :
+    ///          :   n3 ----(L2)---------------- m3   :
+    ///          :                                    :
+    ///           \-------------- sheave -------------/
+    /// ```
+    ///
+    /// In the picture above, `a`, `b`, `x`, `y` are internal edges
+    /// of `lhs` and `rhs` and stay inside their respective graphs.
+    /// `L1` and `L2` are regular edges of the sheave that cross the
+    /// boundary between the two graphs. `M` is a meta-edge whose
+    /// endpoints are themselves sheave edges (`L1` and `L2`).
+    pub fn sheave(&self, lhs: &Graph, rhs: &Graph) -> &mut Graph {
+        unimplemented!()
+    }
 
     /// Get all neighbours nodes of entity with id
     pub fn neighbours(&self, id: &EntityId) -> Result<Vec<NodeId>, EntityNotFoundError> {
@@ -294,15 +338,6 @@ impl Graph {
         }
 
         Ok(edges)
-    }
-
-    /// Get subgraph by path, returns None if subgraph doesn't exist
-    pub fn subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
-        let mut current_graph = self;
-        for chank in path.iter() {
-            current_graph = current_graph.subgraphs.get_mut(chank.to_str()?)?;
-        }
-        Some(current_graph)
     }
 
     /// Get field by entity id from the whole graph (including subgraphs),
@@ -455,11 +490,53 @@ impl Graph {
         }
     }
 
-    /// Check if exist path between source and target
+    /// Returns `true` if a path exists between `source` and `target`
+    /// when traversal may freely cross between nodes and edges.
+    ///
+    /// An entity is incident with another whenever an edge — regular
+    /// or meta — connects them. Unlike [`Graph::is_existing_path`],
+    /// which stays within entities of one kind, `is_linked` treats
+    /// nodes and edges uniformly: a node reaches an adjacent edge
+    /// through that edge's endpoints, and an edge reaches another
+    /// edge through any meta-edge between them.
+    ///
+    /// As a consequence, `is_linked` is at least as permissive as
+    /// `is_existing_path` — every same-kind path is also a cross-kind
+    /// path, but not every cross-kind path is same-kind.
+    ///
+    /// # Example
+    ///
+    /// ```text
+    ///   n1 --(e1)--> n2
+    ///         ^
+    ///         |
+    ///        (e3)
+    ///         |
+    ///   n3 --(e2)--> n4
+    ///         ^
+    ///         |
+    ///        (e5)
+    ///         |
+    ///   n5 --(e4)--> n6 --(e6)--> n7
+    /// ```
+    ///
+    /// - `is_linked(e1, e4)` → `Ok(true)`  — via `e1 — e3 — e2 — e5 — e4`
+    ///   (same route as `is_existing_path`).
+    /// - `is_linked(n5, n7)` → `Ok(true)`  — via `n5 — e4 — n6 — e6 — n7`
+    ///   (same route as `is_existing_path`).
+    /// - `is_linked(e1, n6)` → `Ok(true)`  — via
+    ///   `e1 — e3 — e2 — e5 — e4 — n6`. The same query is `Ok(false)`
+    ///   for [`Graph::is_existing_path`], which forbids crossing
+    ///   between an edge and a node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MissingEndpointsError`] if `source` or `target` does
+    /// not exist anywhere in this graph or its subgraphs.
     pub fn is_linked(
         &self,
-        source: &Uuid,
-        target: &Uuid,
+        source: &EntityId,
+        target: &EntityId,
     ) -> Result<bool, MissingEndpointsError> {
         self.__ensure_endpoints_exist(source, target)?;
 
