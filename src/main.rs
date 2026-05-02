@@ -31,7 +31,7 @@ struct NodeNotFoundError(NodeId);
 #[derive(Debug)]
 struct EdgeNotFoundError(EdgeID);
 #[derive(Debug)]
-struct MissingTargetsError {
+struct MissingEndpointsError {
     missing_targets: Vec<Uuid>,
 }
 
@@ -44,7 +44,7 @@ struct IncorrectTypeError {
 
 #[derive(Debug)]
 enum AddEdgeError {
-    MissingTargets(MissingTargetsError),
+    MissingEndpointsError(MissingEndpointsError),
     EdgeAlreadyExists(EdgeID),
 }
 
@@ -53,7 +53,7 @@ enum ApplyDeltaError {
     EdgeNotFoundError(EdgeNotFoundError),
     NodeAlreadyExists(NodeAlreadyExistsError),
     NodeNotFound(NodeNotFoundError),
-    MissingTargetsError(MissingTargetsError),
+    MissingTargetsError(MissingEndpointsError),
     AddEdgeError(AddEdgeError),
     RetargetError(RetargetError),
     IncorrectType(IncorrectTypeError),
@@ -173,6 +173,10 @@ struct Graph {
 }
 
 impl Graph {
+    // ------------ START ROOTS ------------------- //
+    // Roots are methods called on root graph
+
+    /// Iterate over all entities of the whole graph
     pub fn global_entities(&self) -> impl Iterator<Item = EntityId> {
         let local_edges = self
             .edges
@@ -196,6 +200,7 @@ impl Graph {
         iter.collect::<HashSet<_>>().into_iter()
     }
 
+    /// Iterate over all edges of the whole graph
     pub fn global_edges(&self) -> impl Iterator<Item = EdgeID> {
         let mut iter: Option<Box<dyn Iterator<Item = EdgeID>>> = None;
 
@@ -211,6 +216,7 @@ impl Graph {
         iter.unwrap()
     }
 
+    /// Iterate over all nodes of the whole graph
     pub fn global_nodes(&self) -> impl Iterator<Item = NodeId> {
         let edges = self.global_edges().collect::<HashSet<EdgeID>>();
         let mut iter: Box<dyn Iterator<Item = NodeId>> = Box::new(
@@ -371,14 +377,56 @@ impl Graph {
         self.is_node(id) || self.is_edge(id)
     }
 
-    /// Check if exist path between source and target
+    /// Returns `true` if a path exists between `source` and `target`
+    /// while staying within entities of the **same kind** — that is,
+    /// node-to-node or edge-to-edge, but never crossing between them.
+    ///
+    /// Two nodes count as connected when an edge has them as its
+    /// endpoints. Two edges count as connected when a meta-edge — an
+    /// edge whose endpoints are themselves edges — links them. A
+    /// mixed query (one node and one edge) therefore always returns
+    /// `Ok(false)`: there is no same-kind path between them by
+    /// definition. Use [`Graph::is_linked`] for connectivity that may
+    /// freely traverse both nodes and edges.
+    ///
+    /// # Example
+    ///
+    /// ```text
+    ///   n1 --(e1)--> n2
+    ///         ^
+    ///         |
+    ///        (e3)
+    ///         |
+    ///   n3 --(e2)--> n4
+    ///         ^
+    ///         |
+    ///        (e5)
+    ///         |
+    ///   n5 --(e4)--> n6 --(e6)--> n7
+    /// ```
+    ///
+    /// - `is_existing_path(e1, e4)` → `Ok(true)`  — via the meta-edge
+    ///   chain `e1 — e3 — e2 — e5 — e4`.
+    /// - `is_existing_path(n5, n7)` → `Ok(true)`  — via the node
+    ///   chain `n5 — e4 — n6 — e6 — n7`.
+    /// - `is_existing_path(e1, n6)` → `Ok(false)` — an edge and a
+    ///   node are never on the same-kind path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MissingTargetsError`] if `source` or `target` does
+    /// not exist anywhere in this graph or its subgraphs.
     pub fn is_existing_path(
         &self,
         source: &Uuid,
         target: &Uuid,
-    ) -> Result<bool, IncorrectTypeError> {
+    ) -> Result<bool, MissingEndpointsError> {
         unimplemented!()
     }
+
+    /// Check if exist path between source and target
+    pub fn is_linked() {}
+
     /* ------------ END PROBS -------------------- */
 
     /* ------------ START CONSTRUCTORS ----------- */
@@ -446,7 +494,7 @@ impl Graph {
             if !target_exists {
                 missing_targets.push(target);
             }
-            return Err(AddEdgeError::MissingTargets(MissingTargetsError {
+            return Err(AddEdgeError::MissingEndpointsError(MissingEndpointsError {
                 missing_targets,
             }));
         }
