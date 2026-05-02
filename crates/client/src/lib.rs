@@ -1,26 +1,32 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 
 type RequestId = u64;
+type SubId = u64;
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
 /// Wire frame type of outgoing msg.
-enum OutFrame {
+#[derive(Debug)]
+pub enum OutFrame {
     Call { id: RequestId, name: String, args: Vec<u8> },
-    Subscribe { reducer: String },
+    Subscribe { sub: SubId, reducer: String },
 }
 
 /// Wire frame type of incoming msg.
-enum InFrame {
-    Reply { id: RequestId, ret: Vec<u8> }
+#[derive(Debug)]
+pub enum InFrame {
+    Reply { id: RequestId, ret: Vec<u8> },
 }
 
 /// Failure mode of the underlying transport — I/O errors,
 /// codec failures, peer disconnects.
-enum TransportError {
-
-}
+#[derive(Debug)]
+pub enum TransportError {}
 
 /// Bidirectional message stream — a duplex channel over which two
 /// peers exchange framed messages.
@@ -28,143 +34,113 @@ enum TransportError {
 /// Each direction is independent: `send` pushes a message towards
 /// the peer, `recv` yields the next message the peer sent us. The
 /// two halves are decoupled — a peer may close its outgoing half
-/// (via `close`) while the incoming half remains open, and `send`
-/// / `recv` may be driven concurrently from different tasks.
-///
-/// Within one direction, messages are delivered in FIFO order.
-/// Across directions there is no ordering relation.
-///
-/// ```text
-///    +---- self ----+                    +---- peer ----+
-///    |              |  ----- send ---->  |              |
-///    |              |  <---- recv -----  |              |
-///    +--------------+                    +--------------+
-/// ```
+/// (via `close`) while the incoming half remains open.
 ///
 /// `Transport` is intentionally agnostic about the protocol it
 /// carries: distinguishing requests, responses, and server pushes
-/// is the job of a higher layer that picks the `Message` type.
-trait Transport {
-    /// Send `msg` to the peer.
-    ///
-    /// Resolves once the message has been handed off to the
-    /// underlying transport (not necessarily delivered to the
-    /// peer's application).
+/// is the job of a higher layer that picks the frame types.
+///
+/// # Cancellation safety
+///
+/// `recv` is driven inside a `tokio::select!`, which means it can be
+/// dropped mid-poll. Implementations MUST be cancellation-safe:
+/// dropping the `recv` future must not lose buffered frames.
+pub trait Transport: Send {
     fn send(
         &mut self,
         msg: OutFrame,
     ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + '_>>;
 
-    /// Wait for the next message from the peer.
-    ///
-    /// Resolves to `Ok(None)` once the peer has closed its
-    /// outgoing half — no further messages will arrive on this
-    /// transport.
     fn recv(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = Result<Option<InFrame>, TransportError>> + Send + '_>>;
 
-    /// Close the local outgoing half.
-    ///
-    /// Pending sends are flushed first; subsequent calls to `send`
-    /// must return an error. The remote side's `recv` will
-    /// eventually yield `Ok(None)`.
     fn close(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + '_>>;
 }
 
-struct Client {
-    /// Transport write-half
-    tx: Arc<Mutex<TransportWriter>>,
+pub struct Client {
+    /// Outgoing-frame queue — drained by the demux task.
+    tx: mpsc::Sender<OutFrame>,
 
     /// Pending response registry: request id → where to put the result.
     pending_calls: Arc<Mutex<HashMap<RequestId, oneshot::Sender<InFrame>>>>,
 
-    /// Register of active subscriptions: 
-    /// subscription ID → where to send the delta.
+    /// Active subscriptions: subscription id → where to forward the frame.
     subscriptions: Arc<Mutex<HashMap<SubId, mpsc::Sender<InFrame>>>>,
 
-    /// Message ID counter
+    /// Counter shared between request and subscription ids.
     next_id: AtomicU64,
 
-    /// Demultiplexer background task
+    /// Demux task — owns the transport and routes frames in both directions.
+    /// Aborted on drop.
     _demux: JoinHandle<()>,
 }
 
 impl Client {
-    pub fn connect(transport: Box<dyn Transport>) -> Self {
-        let (out_tx, mut out_rx) = mpsc::channel::<OutFrame>();
-        let pending = Arc::new(Mutex::new(HashMap::new()));
-        let subs    = Arc::new(Mutex::new(HashMap::new()));
+    pub fn connect(mut transport: Box<dyn Transport>) -> Self {
+        let (out_tx, mut out_rx) = mpsc::channel::<OutFrame>(64);
+        let pending: Arc<Mutex<HashMap<RequestId, oneshot::Sender<InFrame>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let subs: Arc<Mutex<HashMap<SubId, mpsc::Sender<InFrame>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
-        let demux = tokio::spawn({
+        let demux = {
             let pending = pending.clone();
-            let subs    = subs.clone();
-
-            async move {
+            let _subs = subs.clone();
+            tokio::spawn(async move {
                 loop {
                     tokio::select! {
-                        // Outgoing: given to transport
-                        Some(out) = out_rx.recv() => {
-                            let _ = transport.send(out).await;
-                        }
-                        // Incoming: routing
-                        res = transport.recv() => match res {
-                            Ok(Some(InFrame::Reply { id, .. })) => {
-                                if let Some(s) = pending.lock().unwrap().remove(&id) {
-                                    let _ = s.send(/* … */);
-                                }
+                        maybe_out = out_rx.recv() => match maybe_out {
+                            Some(frame) => {
+                                let _ = transport.send(frame).await;
                             }
-                            Ok(Some(InFrame::Patch { sub, .. })) => {
-                                if let Some(tx) = subs.lock().unwrap().get(&sub) {
-                                    let _ = tx.send(/* … */).await;
+                            // All callers dropped — nothing more will be sent.
+                            None => break,
+                        },
+                        res = transport.recv() => match res {
+                            Ok(Some(InFrame::Reply { id, ret })) => {
+                                let waiter = pending.lock().unwrap().remove(&id);
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::Reply { id, ret });
                                 }
                             }
                             Ok(None) | Err(_) => break,
-                            _ => {}
-                        }
+                        },
                     }
                 }
-            }
-        });
+                let _ = transport.close().await;
+            })
+        };
 
-        Client { 
-            tx: Arc::new(Mutex::new(tx)), 
+        Client {
+            tx: out_tx,
             pending_calls: pending,
-            subscriptions: subs, 
-            next_id: 0.into(), 
+            subscriptions: subs,
+            next_id: AtomicU64::new(0),
             _demux: demux,
         }
     }
 
-    pub async fn call(&self, reducer: String) {
+    pub async fn call(&self, name: String, args: Vec<u8>) -> Result<Vec<u8>, BoxError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        // Register first, send second — the reply can't race the registration.
         self.pending_calls.lock().unwrap().insert(id, reply_tx);
+        self.tx.send(OutFrame::Call { id, name, args }).await?;
 
-        self.tx.lock().await
-            .send(OutFrame::Call { id, name })
-            .await?;
-
-        Ok(reply_rx.await?)
+        match reply_rx.await? {
+            InFrame::Reply { ret, .. } => Ok(ret),
+        }
     }
 
-    pub fn cold_view(reducer: String) {
+    pub fn cold_view(&self, _reducer: String) {
         unimplemented!()
     }
 
-    pub async fn materialized(&mut self, reducer: String) -> Result<, _> {
-        // Server subscription
-        self.transport.send(OutFrame::Subscribe { reducer }).await?;
-
-        let initial = match self.transport.recv().await? {
-            Some(InFrame::Snapshot(g)) => g,
-            _ => return Err(/* protocol error */)
-        };
-
-        let graph = Arc::new(Mutex::new(initial));
-
-
+    pub async fn materialized(&self, _reducer: String) -> Result<(), BoxError> {
+        unimplemented!()
     }
 }
