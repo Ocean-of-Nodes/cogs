@@ -1,24 +1,33 @@
-use std::collections::HashMap;
-use uuid::Uuid;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use uuid::Uuid;
 
+/// Entity is a common type for nodes and edges
 type EntityId = Uuid;
-type NodeID = Uuid;
+/// Node is an ends of edges that's not edge,
+/// but contains data as field
+type NodeId = Uuid;
+/// Edge is an entity that contains data as
+/// field and link between two entities
 type EdgeID = Uuid;
+
+/// Listener is a function that will be called when graph be changed
 type ListernerID = Uuid;
 
 #[derive(Debug)]
+struct EntityNotFoundError(EntityId);
+#[derive(Debug)]
 struct UnexistentPathError {
-    /// If we pass an nonexistent path, for example 
-    /// "/subgraph1/subgraph2/subgraph3", 
-    /// where subgpraph1 exist but subgraph2 doesn't, 
-    /// then we will return error with valid_path_part = "/subgraph1" 
+    /// If we pass an nonexistent path, for example
+    /// "/subgraph1/subgraph2/subgraph3",
+    /// where subgpraph1 exist but subgraph2 doesn't,
+    /// then we will return error with valid_path_part = "/subgraph1"
     valid_path_part: PathBuf,
 }
 #[derive(Debug)]
-struct NodeAlreadyExistsError(NodeID);
+struct NodeAlreadyExistsError(NodeId);
 #[derive(Debug)]
-struct NodeNotFoundError(NodeID);
+struct NodeNotFoundError(NodeId);
 #[derive(Debug)]
 struct EdgeNotFoundError(EdgeID);
 #[derive(Debug)]
@@ -28,7 +37,7 @@ struct MissingTargetsError {
 
 #[derive(Debug)]
 struct IncorrectTypeError {
-    node_id: NodeID,
+    node_id: NodeId,
     expected_type: String,
     actual_type: String,
 }
@@ -133,38 +142,29 @@ pub enum Field {
     Null,
 }
 
+/// Triplet is a link beetween two entities
 #[derive(Debug, Default)]
 struct Triplet {
-    source: Uuid,
-    target: Uuid,
-    edge: Uuid,
+    id: EdgeID,
+    source: EntityId,
+    target: EntityId,
 }
 
 #[derive(Default)]
 struct Graph {
-    /// Triplet is a link beetween two target's
-    /// example: node1 --(edge)-- node2
-    /// But the target can be not only a node representing a 
-    /// field, but also another edge
-    /// example:
-    ///
-    ///  node1             node3
-    ///   |                  |
-    /// (edge) --(edge)-- (edge2)
-    ///   |                  |
-    ///  node2             node4
+    /// Triplet is a link beetween two entities
     edges: Vec<Triplet>,
-    /// Storage for data of nodes and edges at same level.
-    entities: HashMap<Uuid, Field>,
-    
-    /// Edges beetween subgraphs and parent graph 
+    /// Storage for data attached to entity id.
+    entities: HashMap<EntityId, Field>,
+
+    /// Edges beetween subgraphs and parent graph
     /// or beetween subgraphs, regardless level for example
-    /// parent have two subgraphs: subgraph1 and subgraph2, 
+    /// parent have two subgraphs: subgraph1 and subgraph2,
     /// and edge beetween them, then it will be in beetween_edges
     beetween_edges: Vec<Triplet>,
-    /// Storage for data of edges beetween subgraphs and 
+    /// Storage for data of edges beetween subgraphs and
     /// parent graph or beetween subgraphs
-    beetween_edges_data: HashMap<Uuid, Field>,
+    beetween_edges_entities: HashMap<Uuid, Field>,
     subgraphs: HashMap<String, Graph>,
 
     /// Listeners thats will trigger when graph or holded
@@ -173,10 +173,55 @@ struct Graph {
 }
 
 impl Graph {
+    pub fn global_entities(&self) -> impl Iterator<Item = EntityId> {
+        self.edges
+            .iter()
+            .flat_map(|edge| [edge.id, edge.source, edge.target])
+            .chain(self.entities.keys().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+    }
+
+    pub fn global_edges(&self) -> impl Iterator<Item = EdgeID> {
+        let mut iter: Option<Box<dyn Iterator<Item = EdgeID>>> = None;
+
+        let edges = self.edges.iter().map(|edge| edge.id);
+        let beetween_edges = self.beetween_edges.iter().map(|edge| edge.id);
+        iter = Some(Box::new(edges.chain(beetween_edges)));
+
+        for subgraph in self.subgraphs.values() {
+            let subgraph_edges = subgraph.global_edges();
+            iter = Some(Box::new(iter.unwrap().chain(subgraph_edges)));
+        }
+
+        iter.unwrap()
+    }
+
+    pub fn global_nodes(&self) -> impl Iterator<Item = NodeId> {
+        let edges = self.global_edges().collect::<HashSet<EdgeID>>();
+        let mut iter: Box<dyn Iterator<Item = NodeId>> = Box::new(
+            self.entities
+                .keys()
+                .copied()
+                .filter(move |id| !edges.contains(id)),
+        );
+
+        for subgraph in self.subgraphs.values() {
+            let subgraph_nodes = subgraph.global_nodes();
+            iter = Box::new(iter.chain(subgraph_nodes));
+        }
+
+        iter
+    }
+
     /* ------------ START GETTERS ------------------- */
 
     /// Get all neighbours nodes of entity with id
-    pub fn get_neighbours(&self, id: &EntityId) -> Vec<NodeID> {
+    pub fn neighbours(&self, id: &EntityId) -> Result<Vec<NodeId>, EntityNotFoundError> {
+        if !self.is_exist(id) {
+            return Err(EntityNotFoundError(*id));
+        }
+
         let mut neighbours = Vec::new();
         for triplet in self.edges.iter() {
             if &triplet.source == id {
@@ -195,37 +240,44 @@ impl Graph {
         }
 
         for graph in self.subgraphs.values() {
-            let subgraph_neighbours = graph.get_neighbours(id);
-            neighbours.extend(subgraph_neighbours);
+            // NOTE: we olready check that id exist in graph,
+            if let Ok(subgraph_neighbours) = graph.neighbours(id) {
+                neighbours.extend(subgraph_neighbours);
+            }
         }
 
-        neighbours
+        Ok(neighbours)
     }
 
-    pub fn get_edges(&self, id: &NodeID) -> Vec<EdgeID> {
+    /// Get all edges link with entity with id
+    pub fn edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
+        if !self.is_exist(id) {
+            return Err(EntityNotFoundError(*id));
+        }
+
         let mut edges = Vec::new();
         for triplet in self.edges.iter() {
             if &triplet.source == id || &triplet.target == id {
-                edges.push(triplet.edge);
+                edges.push(triplet.id);
             }
         }
 
         for triplet in self.beetween_edges.iter() {
             if &triplet.source == id || &triplet.target == id {
-                edges.push(triplet.edge);
+                edges.push(triplet.id);
             }
         }
 
         for graph in self.subgraphs.values() {
-            let subgraph_edges = graph.get_edges(id);
+            let subgraph_edges = graph.edges(id);
             edges.extend(subgraph_edges);
         }
 
-        edges
+        Ok(edges)
     }
 
-    /// Get subgraph by relative path, returns None if subgraph doesn't exist
-    pub fn get_subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
+    /// Get subgraph by path, returns None if subgraph doesn't exist
+    pub fn subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
         let mut current_graph = self;
         for chank in path.iter() {
             current_graph = current_graph.subgraphs.get_mut(chank.to_str()?)?;
@@ -233,33 +285,44 @@ impl Graph {
         Some(current_graph)
     }
 
-    /// Get node by id from the whole graph (including subgraphs), 
-    /// returns None if node doesn't exist
-    pub fn get_node(&self, id: &Uuid) -> Option<&Field> {
+    /// Get field by entity id from the whole graph (including subgraphs),
+    /// returns None if field doesn't exist
+    pub fn field(&self, id: &EntityId) -> Option<&Field> {
         if let Some(field) = self.entities.get(id) {
             return Some(field);
         }
 
-        if let Some(field) = self.beetween_edges_data.get(id) {
+        if let Some(field) = self.beetween_edges_entities.get(id) {
             return Some(field);
         }
 
         for graph in self.subgraphs.values() {
-            if let Some(field) = graph.get_node(id) {
+            if let Some(field) = graph.field(id) {
                 return Some(field);
             }
         }
         None
     }
 
-    /// Get edge by id from the whole graph (including subgraphs),
+    /// Get triplet by id from the whole graph (including subgraphs),
     /// returns None if edge doesn't exist
-    pub fn get_edge(&self, id: &Uuid) -> Option<&Triplet> {
-        if let Some(triplet) = self.edges.iter().find(|triplet| &triplet.edge == id) {
+    pub fn get_edge(&self, id: &EdgeID) -> Result<&Triplet, IncorrectTypeError> {
+        if !self.is_edge(id) {
+            return Err(IncorrectTypeError {
+                node_id: *id,
+                expected_type: "Edge".to_string(),
+                actual_type: match self.field(id) {
+                    Some(field) => format!("{:?}", field),
+                    _ => "None".to_string(),
+                },
+            });
+        }
+
+        if let Some(triplet) = self.edges.iter().find(|triplet| &triplet.id == id) {
             return Some(triplet);
         }
-        
-        if let Some(triplet) = self.beetween_edges.iter().find(|triplet| &triplet.edge == id) {
+
+        if let Some(triplet) = self.beetween_edges.iter().find(|triplet| &triplet.id == id) {
             return Some(triplet);
         }
 
@@ -274,43 +337,49 @@ impl Graph {
 
     /* ------------ START PROBS -------------------- */
 
-    /// Check if id is edge from the whole graph (including subgraph 
-    /// and endge beetween subgraphs or parent and subgraphs), 
+    /// Check if id is edge from the whole graph (including subgraph
+    /// and endge beetween subgraphs or parent and subgraphs),
     /// returns true if edge exists, false otherwise
-    pub fn is_edge(&self, id: &Uuid) -> bool {
-        self.edges.iter().any(|triplet| &triplet.edge == id)
+    pub fn is_edge(&self, id: &EntityId) -> bool {
+        self.global_edges().any(|edge_id| &edge_id == id)
     }
 
     /// Check if id is node (including subgraph), returns true
     /// if node exists, false otherwise
-    pub fn is_node(&self, id: &Uuid) -> bool {
-        if self.entities.contains_key(id) {
-            return true;
-        }
-        self.subgraphs.values().any(|g| g.is_node(id))
+    pub fn is_node(&self, id: &EntityId) -> bool {
+        self.global_nodes().any(|node_id| &node_id == id)
     }
 
-    /// Check if id is node or edge from the 
-    /// whole graph (including subgraph), 
+    /// Check if id is node or edge from the
+    /// whole graph (including subgraph),
     /// returns true if node or edge exists, false otherwise
-    pub fn is_exist(&self, id: &Uuid) -> bool {
+    pub fn is_exist(&self, id: &EntityId) -> bool {
         self.is_node(id) || self.is_edge(id)
     }
 
     /// Check if exist path between source and target
-    pub fn is_existing_path(&self, source: &Uuid, target: &Uuid) -> Result<bool, IncorrectTypeError> { 
-       unimplemented!()
+    pub fn is_existing_path(
+        &self,
+        source: &Uuid,
+        target: &Uuid,
+    ) -> Result<bool, IncorrectTypeError> {
+        unimplemented!()
     }
     /* ------------ END PROBS -------------------- */
 
     /* ------------ START CONSTRUCTORS ----------- */
 
-    /// Walks the parent path (all components except the last); 
-    /// the last component is the name under which `graph` will 
+    /// Walks the parent path (all components except the last);
+    /// the last component is the name under which `graph` will
     /// be inserted in that parent.
     fn add_subgraph(&mut self, name: &PathBuf, graph: Graph) -> Result<(), UnexistentPathError> {
         let mut components = name.iter();
-        let subgraph_name = components.next_back().unwrap().to_str().unwrap().to_string();
+        let subgraph_name = components
+            .next_back()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
 
         let mut current_graph = self;
         let mut current_path = PathBuf::new();
@@ -320,7 +389,9 @@ impl Graph {
                 current_graph = subgraph;
                 current_path.push(chank);
             } else {
-                return Err(UnexistentPathError { valid_path_part: current_path });
+                return Err(UnexistentPathError {
+                    valid_path_part: current_path,
+                });
             }
         }
         current_graph.subgraphs.insert(subgraph_name, graph);
@@ -328,11 +399,10 @@ impl Graph {
     }
 
     fn __add_node_with_id(&mut self, id: Uuid, field: Field) -> Result<(), NodeAlreadyExistsError> {
-        if self.get_node(&id).is_some() {
+        if self.field(&id).is_some() {
             return Err(NodeAlreadyExistsError(id));
-        
         }
-        
+
         self.entities.insert(id, field);
         Ok(())
     }
@@ -342,7 +412,12 @@ impl Graph {
         self.__add_node_with_id(id, field).map(|_| id)
     }
 
-    fn __add_edge_with_id(&mut self, id: Uuid, source: Uuid, target: Uuid) -> Result<(), AddEdgeError> {
+    fn __add_edge_with_id(
+        &mut self,
+        id: Uuid,
+        source: Uuid,
+        target: Uuid,
+    ) -> Result<(), AddEdgeError> {
         if self.get_edge(&id).is_some() {
             return Err(AddEdgeError::EdgeAlreadyExists(id));
         }
@@ -357,14 +432,16 @@ impl Graph {
             if !target_exists {
                 missing_targets.push(target);
             }
-            return Err(AddEdgeError::MissingTargets(MissingTargetsError { missing_targets }));
+            return Err(AddEdgeError::MissingTargets(MissingTargetsError {
+                missing_targets,
+            }));
         }
 
-        let triplet = Triplet { source, target, edge: id };
-        let source_local = self.entities.contains_key(&source)
-            || self.edges.iter().any(|t| t.edge == source);
-        let target_local = self.entities.contains_key(&target)
-            || self.edges.iter().any(|t| t.edge == target);
+        let triplet = Triplet { source, target, id };
+        let source_local =
+            self.entities.contains_key(&source) || self.edges.iter().any(|t| t.id == source);
+        let target_local =
+            self.entities.contains_key(&target) || self.edges.iter().any(|t| t.id == target);
         if source_local && target_local {
             self.edges.push(triplet);
         } else {
@@ -375,20 +452,23 @@ impl Graph {
 
     pub fn add_edge(&mut self, source: Uuid, target: Uuid) -> Result<EdgeID, AddEdgeError> {
         let edge_id = Uuid::new_v4();
-        self.__add_edge_with_id(edge_id, source, target).map(|_| edge_id)?;
+        self.__add_edge_with_id(edge_id, source, target)
+            .map(|_| edge_id)?;
         Ok(edge_id)
     }
     /* ------------ END CONSTRUCTORS ------------- */
 
     /* ------------ START DESTRUCTORS ----------- */
     pub fn remove_node(&mut self, id: &Uuid) -> Result<Field, NodeNotFoundError> {
-        self.entities.remove(id).ok_or_else(|| NodeNotFoundError(*id))
+        self.entities
+            .remove(id)
+            .ok_or_else(|| NodeNotFoundError(*id))
     }
 
     pub fn remove_edge(&mut self, id: &Uuid) -> Result<Triplet, EdgeNotFoundError> {
         self.edges
             .iter()
-            .position(|triplet| &triplet.edge == id)
+            .position(|triplet| &triplet.id == id)
             .map(|index| self.edges.remove(index))
             .ok_or_else(|| EdgeNotFoundError(*id))
     }
@@ -404,26 +484,28 @@ impl Graph {
         unimplemented!()
     }
 
-    pub fn retraget_edge(&mut self, id: &Uuid, new_target: RetrargetEdge) -> Result<(), RetargetError> {
+    pub fn retraget_edge(
+        &mut self,
+        id: &Uuid,
+        new_target: RetrargetEdge,
+    ) -> Result<(), RetargetError> {
         unimplemented!()
     }
 
     pub fn apply_delta(&mut self, id: &Uuid, delta: Patch) -> Result<(), ApplyDeltaError> {
         match delta {
-            Patch::AddNode { id, field } => {
-                self.__add_node_with_id(id, field).map_err(|e| ApplyDeltaError::NodeAlreadyExists(e))
-            }
-            Patch::RemoveNode { id } => {
-                self.remove_node(&id)
-                    .map(|_| ())
-                    .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
-            }
-            Patch::ReplaceNode { id, field } => {
-                self.replace_node(&id, field)
-                    .map(|_| ())
-                    .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
-            }
-            Patch::ChangeNode { id, delta} => {
+            Patch::AddNode { id, field } => self
+                .__add_node_with_id(id, field)
+                .map_err(|e| ApplyDeltaError::NodeAlreadyExists(e)),
+            Patch::RemoveNode { id } => self
+                .remove_node(&id)
+                .map(|_| ())
+                .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id))),
+            Patch::ReplaceNode { id, field } => self
+                .replace_node(&id, field)
+                .map(|_| ())
+                .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id))),
+            Patch::ChangeNode { id, delta } => {
                 // self.get_node(&id)
                 //     .ok_or_else(|| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
                 //     .and_then(|field| {
@@ -440,20 +522,17 @@ impl Graph {
                 //         }
                 //     })
                 unimplemented!()
-            },
-            Patch::AddEdge { id, source, target } => {
-                self.__add_edge_with_id(id, source, target)
-                    .map_err(|e| ApplyDeltaError::AddEdgeError(e))
             }
-            Patch::RemoveEdge { id } => {
-                 self.remove_edge(&id)
-                    .map(|_| ())
-                    .map_err(|_| ApplyDeltaError::EdgeNotFoundError(EdgeNotFoundError(id)))
-            }
-            Patch::RetrargetEdge { id, new_target } => {
-                 self.retraget_edge(&id, new_target)
-                    .map_err(|e| ApplyDeltaError::RetargetError(e))
-            }
+            Patch::AddEdge { id, source, target } => self
+                .__add_edge_with_id(id, source, target)
+                .map_err(|e| ApplyDeltaError::AddEdgeError(e)),
+            Patch::RemoveEdge { id } => self
+                .remove_edge(&id)
+                .map(|_| ())
+                .map_err(|_| ApplyDeltaError::EdgeNotFoundError(EdgeNotFoundError(id))),
+            Patch::RetrargetEdge { id, new_target } => self
+                .retraget_edge(&id, new_target)
+                .map_err(|e| ApplyDeltaError::RetargetError(e)),
         }
     }
     /* ------------ END MODIFIERS ------------- */
@@ -484,7 +563,7 @@ mod tests {
         use super::*;
 
         /// A simple case
-        #[test]    
+        #[test]
         fn test_get_neighbours_1() {
             // Built graph:
             //  node1 --(edge)--> node2
@@ -492,8 +571,8 @@ mod tests {
             //   |
             // (edge2)
             //   |
-            //  node3  
-            //  
+            //  node3
+            //
             let mut graph = Graph::default();
 
             let field1 = Field::String("node1".to_string());
@@ -505,13 +584,14 @@ mod tests {
             graph.add_edge(node_id1, node_id2).unwrap();
             graph.add_edge(node_id3, node_id1).unwrap();
 
-            let neighbours = graph.get_neighbours(&node_id1);
+            let neighbours = graph.neighbours(&node_id1);
+            assert_eq!(neighbours.len(), 2);
             assert!(neighbours.contains(&node_id2));
             assert!(neighbours.contains(&node_id3));
         }
 
         /// A more complex case with edge beetween edges
-        /// Test that get_neighbours will return only nodes, 
+        /// Test that get_neighbours will return only nodes,
         /// but not edges, even if edge is beetween two edges
         #[test]
         fn test_get_neighbours_2() {
@@ -521,8 +601,8 @@ mod tests {
             //          (edge3) < -- (edge4) -- node5
             //            |
             //            v
-            //  node3 --(edge2)--> node4 
-            //  
+            //  node3 --(edge2)--> node4
+            //
             let mut graph = Graph::default();
 
             let field1 = Field::String("node1".to_string());
@@ -543,22 +623,24 @@ mod tests {
             let node_id5 = graph.add_node(field5).unwrap();
             let edge4 = graph.add_edge(node_id5, edge3).unwrap();
 
-            let neighbours = graph.get_neighbours(&edge3);
+            let neighbours = graph.neighbours(&edge3);
+            assert_eq!(neighbours.len(), 1);
             assert!(neighbours.contains(&node_id5));
         }
 
-        // TODO: get_neighbours_3 in different subgraphs
-        
+        // TODO: get_neighbours in different subgraphs
+
+        /// A simple case
         #[test]
-        fn get_edges() {
+        fn test_get_edges_1() {
             // Built graph:
             //  node1 --(edge)--> node2
             //   ^
             //   |
             // (edge2)
             //   |
-            //  node3  
-            //  
+            //  node3
+            //
             let mut graph = Graph::default();
 
             let field1 = Field::String("node1".to_string());
@@ -570,10 +652,13 @@ mod tests {
             let edge1 = graph.add_edge(node_id1, node_id2).unwrap();
             let edge2 = graph.add_edge(node_id3, node_id1).unwrap();
 
-            let edges = graph.get_edges(&node_id1);
+            let edges = graph.edges(&node_id1);
+            assert_eq!(edges.len(), 2);
             assert!(edges.contains(&edge1));
             assert!(edges.contains(&edge2));
         }
+
+        // TODO: test_get_edges in different subgraphs
 
         #[test]
         fn test_add_node() {
@@ -582,7 +667,7 @@ mod tests {
             let result = graph.add_node(field.clone());
             assert!(result.is_ok());
             let node_id = result.unwrap();
-            assert_eq!(graph.get_node(&node_id), Some(&field));
+            assert_eq!(graph.field(&node_id), Some(&field));
         }
 
         #[test]
@@ -598,7 +683,7 @@ mod tests {
             let edge_id = edge_result.unwrap();
             assert!(graph.get_edge(&edge_id).is_some());
         }
-        
+
         #[test]
         fn test_create_subgraph_and_get_it() {
             let mut graph = Graph::default();
@@ -608,18 +693,22 @@ mod tests {
             graph.add_subgraph(&path, graph2).unwrap();
             path.push("subgraph2");
             graph.add_subgraph(&path, graph3).unwrap();
-            assert!(graph.get_subgraph(&path).is_some());
+            assert!(graph.subgraph(&path).is_some());
         }
 
         #[test]
-        fn test_get_node_from_subgraph() {
+        fn test_get_field_from_subgraph() {
             let mut graph = Graph::default();
             let graph2 = Graph::default();
             let path = PathBuf::from("subgraph");
             graph.add_subgraph(&path, graph2).unwrap();
             let field = Field::String("test".to_string());
-            let node_id = graph.get_subgraph(&path).unwrap().add_node(field.clone()).unwrap();
-            assert_eq!(graph.get_subgraph(&path).unwrap().get_node(&node_id), Some(&field));
+            let node_id = graph
+                .subgraph(&path)
+                .unwrap()
+                .add_node(field.clone())
+                .unwrap();
+            assert_eq!(graph.subgraph(&path).unwrap().field(&node_id), Some(&field));
         }
 
         #[test]
@@ -632,7 +721,7 @@ mod tests {
             let field1 = Field::String("node1".to_string());
             let field2 = Field::String("node2".to_string());
             let node_id1 = graph.add_node(field1).unwrap();
-            let node_id2 = graph.get_subgraph(&path).unwrap().add_node(field2).unwrap();
+            let node_id2 = graph.subgraph(&path).unwrap().add_node(field2).unwrap();
 
             let edge_id = graph.add_edge(node_id1, node_id2).unwrap();
             assert!(graph.get_edge(&edge_id).is_some());
@@ -650,7 +739,7 @@ mod tests {
 
         #[test]
         fn test_get_node_of_edge_beetween_subgraph_and_parent() {
-           unimplemented!()
+            unimplemented!()
         }
 
         #[test]
@@ -687,7 +776,7 @@ mod tests {
             let node_id1 = graph.add_node(field1).unwrap();
             let node_id2 = graph.add_node(field2).unwrap();
             graph.add_edge(node_id1, node_id2).unwrap();
-            
+
             let field3 = Field::String("node3".to_string());
             let field4 = Field::String("node4".to_string());
             let node_id3 = graph.add_node(field3).unwrap();
@@ -697,6 +786,44 @@ mod tests {
             graph.add_edge(node_id1, node_id4).unwrap();
 
             assert!(graph.is_existing_path(&node_id3, &node_id2).unwrap());
+        }
+    }
+
+    mod bench {
+        use super::*;
+
+        /// TODO: after implementation of JIT, test that
+        ///
+        /// G.entities().filter(|id| G.is_edge(id)).collect()
+        /// and
+        /// G.edges().collect()
+        /// should have same behavior after JIT
+        /// and same speed
+        fn eq_behavior1() {
+            let mut graph = Graph::default();
+            unimplemented!();
+            graph
+                .global_entities()
+                .filter(|id| graph.is_edge(id))
+                .for_each(|_| {});
+            graph.global_edges().for_each(|_| {});
+        }
+
+        /// TODO: after implementation of JIT, test that
+        ///
+        /// G.entities().filter(|id| G.is_node(id)).collect()
+        /// and
+        /// G.nodes().collect()
+        /// should have same behavior after JIT
+        /// and same speed
+        fn eq_behavior2() {
+            let mut graph = Graph::default();
+            unimplemented!();
+            graph
+                .global_entities()
+                .filter(|id| graph.is_node(id))
+                .for_each(|_| {});
+            graph.global_nodes().for_each(|_| {});
         }
     }
 }
