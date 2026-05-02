@@ -1,3 +1,5 @@
+mod client;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -152,6 +154,8 @@ struct Triplet {
 
 #[derive(Default)]
 struct Graph {
+    path: PathBuf,
+
     /// Triplet is a link beetween two entities
     edges: Vec<Triplet>,
     /// Storage for data attached to entity id.
@@ -245,7 +249,7 @@ impl Graph {
 
     /// Returns `path` of current graph, path is unique graph id
     pub fn path(&self) -> PathBuf {
-        unimplemented!()
+        self.path.clone()
     }
 
     /* ------------ START GETTERS ------------------- */
@@ -386,6 +390,18 @@ impl Graph {
         Ok(edges)
     }
 
+    pub fn out_nodes() {
+        unimplemented!()
+    }
+
+    pub fn in_nodes() {
+        unimplemented!()
+    }
+
+    pub fn get_paths() {
+        unimplemented!()
+    }
+
     /// Get field by entity id from the whole graph (including subgraphs),
     /// returns None if field doesn't exist
     pub fn field(&self, id: &EntityId) -> Option<&Field> {
@@ -435,6 +451,7 @@ impl Graph {
         
         unreachable!()
     }
+
     /* ------------ END GETTERS -------------------- */
 
     /* ------------ START PROBS -------------------- */
@@ -597,7 +614,7 @@ impl Graph {
     /// Walks the parent path (all components except the last);
     /// the last component is the name under which `graph` will
     /// be inserted in that parent.
-    fn add_subgraph(&mut self, name: &PathBuf, graph: Graph) -> Result<(), UnexistentPathError> {
+    fn add_subgraph(&mut self, name: &PathBuf, mut graph: Graph) -> Result<(), UnexistentPathError> {
         let mut components = name.iter();
         let subgraph_name = components
             .next_back()
@@ -619,6 +636,7 @@ impl Graph {
                 });
             }
         }
+        graph.path = name.to_path_buf(); 
         current_graph.subgraphs.insert(subgraph_name, graph);
         Ok(())
     }
