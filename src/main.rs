@@ -243,6 +243,11 @@ impl Graph {
         Some(current_graph)
     }
 
+    /// Returns `path` of current graph, path is unique graph id
+    pub fn path(&self) -> PathBuf {
+        unimplemented!()
+    }
+
     /* ------------ START GETTERS ------------------- */
 
     /// `Sheave` is a bunch of `links` between two `Graph`s.
@@ -373,8 +378,9 @@ impl Graph {
         }
 
         for graph in self.subgraphs.values() {
-            let subgraph_edges = graph.edges(id);
-            edges.extend(subgraph_edges);
+            if let Ok(subgraph_edges) = graph.edges(id) {
+                edges.extend(subgraph_edges);
+            }
         }
 
         Ok(edges)
@@ -414,19 +420,20 @@ impl Graph {
         }
 
         if let Some(triplet) = self.edges.iter().find(|triplet| &triplet.id == id) {
-            return Some(triplet);
+            return Ok(triplet);
         }
 
         if let Some(triplet) = self.beetween_edges.iter().find(|triplet| &triplet.id == id) {
-            return Some(triplet);
+            return Ok(triplet);
         }
 
         for graph in self.subgraphs.values() {
-            if let Some(triplet) = graph.get_edge(id) {
-                return Some(triplet);
+            if let Ok(triplet) = graph.get_edge(id) {
+                return Ok(triplet);
             }
         }
-        None
+        
+        unreachable!()
     }
     /* ------------ END GETTERS -------------------- */
 
