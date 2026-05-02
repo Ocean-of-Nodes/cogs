@@ -32,7 +32,7 @@ struct NodeNotFoundError(NodeId);
 struct EdgeNotFoundError(EdgeID);
 #[derive(Debug)]
 struct MissingEndpointsError {
-    missing_targets: Vec<Uuid>,
+    missing_endpoints: Vec<Uuid>,
 }
 
 #[derive(Debug)]
@@ -357,24 +357,44 @@ impl Graph {
 
     /* ------------ START PROBS -------------------- */
 
-    /// Check if id is edge from the whole graph (including subgraph
-    /// and endge beetween subgraphs or parent and subgraphs),
+    /// Check if id is edge from the whole graph,
     /// returns true if edge exists, false otherwise
     pub fn is_edge(&self, id: &EntityId) -> bool {
         self.global_edges().any(|edge_id| &edge_id == id)
     }
 
-    /// Check if id is node (including subgraph), returns true
-    /// if node exists, false otherwise
+    /// Check if id is node from the whole graph, 
+    /// returns true if node exists, false otherwise
     pub fn is_node(&self, id: &EntityId) -> bool {
         self.global_nodes().any(|node_id| &node_id == id)
     }
 
-    /// Check if id is node or edge from the
-    /// whole graph (including subgraph),
+    /// Check if id is node or edge from the whole graph,
     /// returns true if node or edge exists, false otherwise
     pub fn is_exist(&self, id: &EntityId) -> bool {
         self.is_node(id) || self.is_edge(id)
+    }
+
+    /// Check that `source` and `target` exist.
+    /// Returns [`MissingEndpointsError`] with unexist endpoints 
+    fn __ensure_endpoints_exist(
+        &self,
+        source: &EntityId,
+        target: &EntityId,
+    ) -> Result<(), MissingEndpointsError> {
+        let mut missing_endpoints = Vec::new();
+        if !self.is_exist(source) {
+            missing_endpoints.push(*source);
+        }
+        if !self.is_exist(target) {
+            missing_endpoints.push(*target);
+        }
+
+        if missing_endpoints.is_empty() {
+            Ok(())
+        } else {
+            Err(MissingEndpointsError { missing_endpoints })
+        }
     }
 
     /// Returns `true` if a path exists between `source` and `target`
@@ -414,18 +434,37 @@ impl Graph {
     ///
     /// # Errors
     ///
-    /// Returns [`MissingTargetsError`] if `source` or `target` does
+    /// Returns [`MissingEndpointsError`] if `source` or `target` does
     /// not exist anywhere in this graph or its subgraphs.
     pub fn is_existing_path(
+        &self,
+        source: &EntityId,
+        target: &EntityId,
+    ) -> Result<bool, MissingEndpointsError> {
+        self.__ensure_endpoints_exist(source, target)?;
+
+        if self.is_node(source) && self.is_node(target) {
+            // Check node-to-node path
+            unimplemented!()
+        } else if self.is_edge(source) && self.is_edge(target) {
+            // Check edge-to-edge path
+            unimplemented!()
+        } else {
+            // Mixed query: one node and one edge
+            Ok(false)
+        }
+    }
+
+    /// Check if exist path between source and target
+    pub fn is_linked(
         &self,
         source: &Uuid,
         target: &Uuid,
     ) -> Result<bool, MissingEndpointsError> {
+        self.__ensure_endpoints_exist(source, target)?;
+
         unimplemented!()
     }
-
-    /// Check if exist path between source and target
-    pub fn is_linked() {}
 
     /* ------------ END PROBS -------------------- */
 
@@ -495,7 +534,7 @@ impl Graph {
                 missing_targets.push(target);
             }
             return Err(AddEdgeError::MissingEndpointsError(MissingEndpointsError {
-                missing_targets,
+                missing_endpoints: missing_targets,
             }));
         }
 
