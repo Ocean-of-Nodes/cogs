@@ -31,7 +31,7 @@ struct MissingEndpointsError {
 #[derive(Debug)]
 struct IncorrectTypeError {
     node_id: NodeId,
-    expected_type: String,
+    expected_type: Vec<String>,
     actual_type: String,
 }
 
@@ -58,12 +58,58 @@ enum RetargetError {
     InvalidTarget(RetrargetEdge),
 }
 
+#[derive(Debug)]
+enum AttachNodeError {
+    AttachTargetNotFound,
+    IncorrectType(IncorrectTypeError),
+}
+
 /// Triplet is a link beetween two entities
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Triplet {
     id: EdgeID,
     source: EntityId,
     target: EntityId,
+}
+
+enum EntityType {
+    Node,
+    Edge,
+    HyperEdge,
+    MetaEdge,
+}
+
+impl EntityType {
+    fn is_attach_target(&self) -> bool {
+        match self {
+            EntityType::Node => false,
+            EntityType::Edge => true,
+            EntityType::HyperEdge => true,
+            EntityType::MetaEdge => true,
+        }
+    }
+}
+
+impl Into<&'static str> for EntityType {
+    fn into(self) -> &'static str {
+        match self {
+            EntityType::Node => "Node",
+            EntityType::Edge => "Edge",
+            EntityType::HyperEdge => "HyperEdge",
+            EntityType::MetaEdge => "MetaEdge",
+        }
+    }
+}
+
+impl std::fmt::Display for EntityType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            EntityType::Node => "Node",
+            EntityType::Edge => "Edge",
+            EntityType::HyperEdge => "HyperEdge",
+            EntityType::MetaEdge => "MetaEdge",
+        })
+    }
 }
 
 #[derive(Default)]
@@ -83,7 +129,7 @@ impl Graph {
     // Roots are methods called on root graph
 
     /// Iterate over all entities of the whole graph
-    pub fn global_entities(&self) -> impl Iterator<Item = EntityId> {
+    pub fn iter_entities(&self) -> impl Iterator<Item = EntityId> {
         self.entities
             .keys()
             .copied()
@@ -313,8 +359,8 @@ impl Graph {
 
         Err(IncorrectTypeError {
             node_id: id.clone(),
-            expected_type: "Edge".into(),
-            actual_type: self.get_type(*id).into(),
+            expected_type: vec!["Edge".to_string()],
+            actual_type: self.get_type(*id).to_string(),
         })
     }
 
@@ -322,8 +368,21 @@ impl Graph {
 
     /* ------------ START PROBS -------------------- */
 
-    pub fn get_type(&self, entity: EntityId) -> &str {
-        unimplemented!()
+    pub fn get_type(&self, entity: EntityId) -> EntityType {
+        if let Some((source, target)) = self.edges.get(&entity) {
+            // Meta-edge if either endpoint is itself an edge or hyperedge.
+            let is_meta_endpoint = |e: &EntityId| {
+                self.edges.contains_key(e) || self.hyper_edge.contains_key(e)
+            };
+            if is_meta_endpoint(source) || is_meta_endpoint(target) {
+                return EntityType::MetaEdge;
+            }
+            return EntityType::Edge;
+        }
+        if self.hyper_edge.contains_key(&entity) {
+            return EntityType::HyperEdge;
+        }
+        EntityType::Node
     }
 
     /*
@@ -342,7 +401,7 @@ impl Graph {
     /// Check if id is node or edge from the whole graph,
     /// returns true if node or edge exists, false otherwise
     pub fn is_exist(&self, id: &EntityId) -> bool {
-        self.global_entities().any(|e| &e == id)
+        self.iter_entities().any(|e| &e == id)
     }
     /*
     /// Check that `source` and `target` exist.
@@ -597,6 +656,31 @@ impl Graph {
     /* ------------ END DESTRUCTORS ------------- */
 
     /* ------------ START MODIFIERS ----------- */
+    */
+
+    fn attach_obj(&mut self, target: AttachTargetID, obj: Object) -> Result<(), AttachNodeError> {
+        if !self.is_exist(&target) {
+            return Err(AttachNodeError::AttachTargetNotFound);
+        }
+
+        let ty = self.get_type(target);
+        if !ty.is_attach_target() {
+            return Err(AttachNodeError::IncorrectType(IncorrectTypeError {
+                node_id: target,
+                expected_type: vec![
+                    EntityType::Edge.to_string(),
+                    EntityType::HyperEdge.to_string(),
+                    EntityType::MetaEdge.to_string(),
+                ],
+                actual_type: ty.to_string(),
+            }));
+        }
+
+        self.entities.insert(target, obj);
+        Ok(())
+    }
+
+    /* 
     pub fn replace_node(&mut self, id: &Uuid, field: Field) -> Result<Field, NodeNotFoundError> {
         unimplemented!()
     }
@@ -691,13 +775,13 @@ mod tests {
     mod test_globals {
         use super::*;
 
-        mod test_global_entities {
+        mod test_iter_entities {
             use super::*;
 
             /// Simple case we just check that all
             /// kind of entities iterator yeld
             #[test]
-            fn test_global_entities1() {
+            fn test_iter_entities1() {
                 let mut g = Graph::default();
                 let obj = create_simple_obj("test_field");
                 let n1 = g.add_node(obj.clone());
@@ -725,7 +809,7 @@ mod tests {
                 expected.insert(e5);
                 expected.insert(h);
 
-                let actual: Vec<_> = g.global_entities().collect();
+                let actual: Vec<_> = g.iter_entities().collect();
 
                 // 1. No duplicates: every entity appears at most once.
                 let mut counts: HashMap<EntityId, usize> = HashMap::new();
@@ -753,10 +837,59 @@ mod tests {
                 }
             }
 
-            /// Checks thats dedublication
-            /// for node and edge\hyperedge work
+            /// Verify deduplication: an id that lives in more than one
+            /// storage map must be yielded by `iter_entities` only
+            /// once.
+            ///
+            /// Setup creates two cross-map collisions on purpose:
+            /// - `e1` lives as an edge *and*, after `attach_obj`, as
+            ///   an entity (object attached to that edge).
+            /// - `h`  lives as a hyperedge *and*, after `attach_obj`,
+            ///   as an entity.
+            ///
+            /// If `iter_entities` ever stops deduplicating (e.g.
+            /// someone removes the trailing `collect::<HashSet<_>>()`),
+            /// `e1` and `h` would each show up twice and this test
+            /// catches it.
             #[test]
-            fn test_global_entities2() {}
+            fn test_iter_entities2() {
+                let mut g = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+
+                let e1 = g.add_edge(n1, n2).unwrap();
+                g.attach_obj(e1, obj.clone()).unwrap();
+
+                let h = g.create_hyperedge(vec![n1, n2]);
+                g.attach_obj(h, obj.clone()).unwrap();
+
+                let actual: Vec<_> = g.iter_entities().collect();
+
+                // 1. No id appears more than once — in particular,
+                //    e1 and h, which sit in two maps each.
+                let mut counts: HashMap<EntityId, usize> = HashMap::new();
+                for id in &actual {
+                    *counts.entry(*id).or_insert(0) += 1;
+                }
+                assert_eq!(
+                    counts.get(&e1).copied(),
+                    Some(1),
+                    "e1 yielded {:?} times, expected 1",
+                    counts.get(&e1)
+                );
+                assert_eq!(
+                    counts.get(&h).copied(),
+                    Some(1),
+                    "h yielded {:?} times, expected 1",
+                    counts.get(&h)
+                );
+
+                // 2. Coverage: exactly the four distinct ids.
+                let actual_set: HashSet<_> = actual.iter().copied().collect();
+                let expected: HashSet<_> = [n1, n2, e1, h].into_iter().collect();
+                assert_eq!(actual_set, expected);
+            }
         }
     }
 

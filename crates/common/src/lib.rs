@@ -11,15 +11,17 @@ pub use path::Path;
 /// for caller that's want get it by next call
 pub type TrackerId = Uuid;
 
-/// Entity is a common type for nodes and edges and hyper edge
+/// Entity is a common type for nodes/edges/hyperedge
 pub type EntityId = Uuid;
+/// Target edges/hyperedge for thats object can be attached 
+pub type AttachTargetID = Uuid;
 /// Node is an ends of edges that's not edge,
 /// but contains data as object
 pub type NodeId = Uuid;
 /// Edge is an entity that contains data as
 /// object and link between two entities
 pub type EdgeID = Uuid;
-/// Hyper edge (also space)
+/// Hyper edge thats hold some entities
 pub type HyperEdgeId = Uuid;
 
 pub type Object = HashMap<String, Field>;
