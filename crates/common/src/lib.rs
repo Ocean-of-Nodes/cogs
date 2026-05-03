@@ -1,7 +1,9 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
+pub mod path;
 
+use std::collections::HashMap;
 use uuid::Uuid;
+
+pub use path::Path;
 
 /// Entity is a common type for nodes and edges and hyper edge
 pub type EntityId = Uuid;
@@ -52,8 +54,9 @@ pub enum ObjectDelta {
         added_fields: Vec<(usize, Field)>,
     },
     SubObjectDelta {
-        /// Path is a slash-separated string representing the path to the nested object
-        path: PathBuf,
+        /// Path is a slash-separated string representing the path
+        /// to the nested object
+        path: Path,
         delta: Vec<ObjectDelta>,
     },
 }
