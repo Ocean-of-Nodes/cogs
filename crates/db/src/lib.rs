@@ -2,14 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-/// Entity is a common type for nodes and edges
+/// Entity is a common type for nodes and edges and hyper edge
 type EntityId = Uuid;
 /// Node is an ends of edges that's not edge,
-/// but contains data as field
+/// but contains data as object
 type NodeId = Uuid;
 /// Edge is an entity that contains data as
-/// field and link between two entities
+/// object and link between two entities
 type EdgeID = Uuid;
+/// Hyper edge (also space) 
+type HyperEdgeId = Uuid;
 
 /// Listener is a function that will be called when graph be changed
 type ListernerID = Uuid;
@@ -92,53 +94,82 @@ enum ObjectDelta {
 
 #[derive(Debug, Clone)]
 enum RetrargetEdge {
-    Source(Uuid),
-    Target(Uuid),
+    Source(EntityId),
+    Target(EntityId),
 }
 
 #[derive(Debug, Clone)]
 enum Patch {
+    // ------------- START NODE DELTA --------------
+
     AddNode {
-        id: Uuid,
-        field: Field,
+        id: EntityId,
+        obj: Object,
     },
     RemoveNode {
-        id: Uuid,
+        id: NodeId,
     },
-    /// When field fundamental type replaced
-    ReplaceNode {
-        id: Uuid,
-        field: Field,
-    },
-    /// Diff for object node, contains list of changes in fields
     ChangeNode {
         id: Uuid,
         delta: Vec<ObjectDelta>,
     },
 
+    // ------------- END NODE DELTA --------------
+
+    // --------------- START EDGE DELTA ----------
+    
     AddEdge {
-        id: Uuid,
-        source: Uuid,
-        target: Uuid,
+        id: EdgeID,
+        source: EntityId,
+        target: EntityId,
     },
     RemoveEdge {
-        id: Uuid,
+        id: EdgeID,
     },
     RetrargetEdge {
-        id: Uuid,
+        id: EdgeID,
         new_target: RetrargetEdge,
     },
+
+    // ------------- END EDGE DELTA --------------
+
+    // ------------- START HYPER EDGE --------------
+    
+    CreateHyperEdge {
+        id: HyperEdgeId,
+        entities: Vec<EntityId>,
+    },
+    RemoveHyperEdge {
+        id: HyperEdgeId,
+    },
+    AddElementsToHyperEdge {
+        id: HyperEdgeId,
+        entities: Vec<EntityId>,
+    },
+    RemoveElementsFromHyperEdge {
+        id: HyperEdgeId,
+        entities: Vec<EntityId>,
+    },
+    MergeHyperEdge {
+        lhs: HyperEdgeId,
+        rhs: HyperEdgeId,
+    }
+    
+    // ------------- END HYPER EDGE --------------
 }
+
+type Object = HashMap<String, Field>;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Field {
     // Composite types
     Array(Vec<Field>),
-    Object(HashMap<String, Field>),
+    Object(Object),
     // Fundamental types
     String(String),
     Bool(bool),
     Number(i128),
+    Link(EntityId),
     Null,
 }
 
@@ -735,7 +766,7 @@ impl Graph {
 
     pub fn apply_delta(&mut self, id: &Uuid, delta: Patch) -> Result<(), ApplyDeltaError> {
         match delta {
-            Patch::AddNode { id, field } => self
+            Patch::AddNode { id, obj: field } => self
                 .__add_node_with_id(id, field)
                 .map_err(|e| ApplyDeltaError::NodeAlreadyExists(e)),
             Patch::RemoveNode { id } => self
