@@ -39,7 +39,7 @@ pub enum OutFrame {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-enum CallError {
+pub enum CallError {
     /// Content correct number of args
     IncorrectNumberOfArgs(u8),
     /// Content not founded hyper edges
