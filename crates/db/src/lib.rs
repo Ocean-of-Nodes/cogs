@@ -140,23 +140,12 @@ impl Graph {
             .into_iter()
     }
 
-    /*
     /// Iterate over all edges of the whole graph
-    pub fn global_edges(&self) -> impl Iterator<Item = EdgeID> {
-        let mut iter: Option<Box<dyn Iterator<Item = EdgeID>>> = None;
-
-        let edges = self.edges.iter().map(|edge| edge.id);
-        let beetween_edges = self.beetween_edges.iter().map(|edge| edge.id);
-        iter = Some(Box::new(edges.chain(beetween_edges)));
-
-        for subgraph in self.subgraphs.values() {
-            let subgraph_edges = subgraph.global_edges();
-            iter = Some(Box::new(iter.unwrap().chain(subgraph_edges)));
-        }
-
-        iter.unwrap()
+    pub fn iter_edges(&self) -> impl Iterator<Item = EdgeID> {
+        self.edges.keys().copied()
     }
 
+    /*
     /// Iterate over all nodes of the whole graph
     pub fn global_nodes(&self) -> impl Iterator<Item = NodeId> {
         let edges = self.global_edges().collect::<HashSet<EdgeID>>();
@@ -371,9 +360,8 @@ impl Graph {
     pub fn get_type(&self, entity: EntityId) -> EntityType {
         if let Some((source, target)) = self.edges.get(&entity) {
             // Meta-edge if either endpoint is itself an edge or hyperedge.
-            let is_meta_endpoint = |e: &EntityId| {
-                self.edges.contains_key(e) || self.hyper_edge.contains_key(e)
-            };
+            let is_meta_endpoint =
+                |e: &EntityId| self.edges.contains_key(e) || self.hyper_edge.contains_key(e);
             if is_meta_endpoint(source) || is_meta_endpoint(target) {
                 return EntityType::MetaEdge;
             }
@@ -680,7 +668,7 @@ impl Graph {
         Ok(())
     }
 
-    /* 
+    /*
     pub fn replace_node(&mut self, id: &Uuid, field: Field) -> Result<Field, NodeNotFoundError> {
         unimplemented!()
     }
@@ -772,6 +760,37 @@ mod tests {
         obj
     }
 
+    fn create_semple_graph() -> (
+        Graph,
+        NodeId,
+        NodeId,
+        NodeId,
+        NodeId,
+        EdgeID,
+        EdgeID,
+        EdgeID,
+        EdgeID,
+        EdgeID,
+        HyperEdgeId,
+    ) {
+        let mut g = Graph::default();
+        let obj = create_simple_obj("test_field");
+        let n1 = g.add_node(obj.clone());
+        let n2 = g.add_node(obj.clone());
+        let n3 = g.add_node(obj.clone());
+        let n4 = g.add_node(obj.clone());
+
+        let e1 = g.add_edge(n1, n2).unwrap();
+        let e2 = g.add_edge(n3, n4).unwrap();
+        let e3 = g.add_edge(e1, e2).unwrap();
+        let e4 = g.add_edge(e3, n2).unwrap();
+
+        let h = g.create_hyperedge(vec![n1, n3]);
+        let e5 = g.add_edge(h, e4).unwrap();
+
+        (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h)
+    }
+
     mod test_globals {
         use super::*;
 
@@ -782,20 +801,19 @@ mod tests {
             /// kind of entities iterator yeld
             #[test]
             fn test_iter_entities1() {
-                let mut g = Graph::default();
-                let obj = create_simple_obj("test_field");
-                let n1 = g.add_node(obj.clone());
-                let n2 = g.add_node(obj.clone());
-                let n3 = g.add_node(obj.clone());
-                let n4 = g.add_node(obj.clone());
-
-                let e1 = g.add_edge(n1, n2).unwrap();
-                let e2 = g.add_edge(n3, n4).unwrap();
-                let e3 = g.add_edge(e1, e2).unwrap();
-                let e4 = g.add_edge(e3, n2).unwrap();
-
-                let h = g.create_hyperedge(vec![n1, n3]);
-                let e5 = g.add_edge(h, e4).unwrap();
+                let (
+                    g,
+                    n1,
+                    n2,
+                    n3,
+                    n4,
+                    e1,
+                    e2,
+                    e3,
+                    e4,
+                    e5,
+                    h,
+                ) = create_semple_graph();
 
                 let mut expected = HashSet::new();
                 expected.insert(n1);
@@ -888,6 +906,50 @@ mod tests {
                 // 2. Coverage: exactly the four distinct ids.
                 let actual_set: HashSet<_> = actual.iter().copied().collect();
                 let expected: HashSet<_> = [n1, n2, e1, h].into_iter().collect();
+                assert_eq!(actual_set, expected);
+            }
+        }
+
+        mod test_iter_edges {
+            use super::*;
+
+            #[test]
+            fn iter_edges1() {
+                let (
+                    g,
+                    _n1,
+                    _n2,
+                    _n3,
+                    _n4,
+                    e1,
+                    e2,
+                    e3,
+                    e4,
+                    e5,
+                    _h,
+                ) = create_semple_graph();
+
+                let actual: Vec<_> = g.iter_edges().collect();
+
+                // No duplicates (HashMap keys can't repeat, but we
+                // assert anyway in case the impl changes).
+                let mut counts: HashMap<EdgeID, usize> = HashMap::new();
+                for id in &actual {
+                    *counts.entry(*id).or_insert(0) += 1;
+                }
+                let duplicates: Vec<_> = counts
+                    .iter()
+                    .filter(|(_, c)| **c > 1)
+                    .map(|(e, c)| (*e, *c))
+                    .collect();
+                if !duplicates.is_empty() {
+                    panic!("iter_edges returned duplicates: {:?}", duplicates);
+                }
+
+                // Exactly the five edges added (e1..e5). Nodes and
+                // the hyperedge `h` must NOT appear.
+                let actual_set: HashSet<_> = actual.iter().copied().collect();
+                let expected: HashSet<_> = [e1, e2, e3, e4, e5].into_iter().collect();
                 assert_eq!(actual_set, expected);
             }
         }
