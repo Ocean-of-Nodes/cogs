@@ -3,14 +3,23 @@ use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
+pub use common::*;
+
 pub type RequestId = u64;
 pub type SubId = u64;
 
 /// Wire frame type of outgoing msg.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum OutFrame {
-    Call { id: RequestId, name: String, args: Vec<u8> },
-    Subscribe { sub: SubId, name: String },
+    Call {
+        id: RequestId,
+        name: String,
+        args: Vec<u8>,
+    },
+    Subscribe {
+        sub: SubId,
+        name: String,
+    },
 }
 
 /// Wire frame type of incoming msg.
@@ -84,7 +93,5 @@ pub trait Transport: Send {
         &mut self,
     ) -> Pin<Box<dyn Future<Output = Result<Option<InFrame>, TransportError>> + Send + '_>>;
 
-    fn close(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + '_>>;
+    fn close(&mut self) -> Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send + '_>>;
 }

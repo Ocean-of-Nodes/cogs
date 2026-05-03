@@ -2,16 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-/// Entity is a common type for nodes and edges and hyper edge
-type EntityId = Uuid;
-/// Node is an ends of edges that's not edge,
-/// but contains data as object
-type NodeId = Uuid;
-/// Edge is an entity that contains data as
-/// object and link between two entities
-type EdgeID = Uuid;
-/// Hyper edge (also space) 
-type HyperEdgeId = Uuid;
+use common::*;
 
 /// Listener is a function that will be called when graph be changed
 type ListernerID = Uuid;
@@ -65,112 +56,6 @@ enum ApplyDeltaError {
 enum RetargetError {
     EdgeNotFound(EdgeID),
     InvalidTarget(RetrargetEdge),
-}
-
-#[derive(Debug, Clone)]
-enum ObjectDelta {
-    AddField {
-        name: String,
-        field: Field,
-    },
-    RemoveField {
-        name: String,
-    },
-    ReplaceField {
-        name: String,
-        field: Field,
-    },
-    ArrayDelta {
-        name: String,
-        removed_indices: Vec<usize>,
-        added_fields: Vec<(usize, Field)>,
-    },
-    SubObjectDelta {
-        /// Path is a slash-separated string representing the path to the nested object
-        path: PathBuf,
-        delta: Vec<ObjectDelta>,
-    },
-}
-
-#[derive(Debug, Clone)]
-enum RetrargetEdge {
-    Source(EntityId),
-    Target(EntityId),
-}
-
-#[derive(Debug, Clone)]
-enum Patch {
-    // ------------- START NODE DELTA --------------
-
-    AddNode {
-        id: EntityId,
-        obj: Object,
-    },
-    RemoveNode {
-        id: NodeId,
-    },
-    ChangeNode {
-        id: Uuid,
-        delta: Vec<ObjectDelta>,
-    },
-
-    // ------------- END NODE DELTA --------------
-
-    // --------------- START EDGE DELTA ----------
-    
-    AddEdge {
-        id: EdgeID,
-        source: EntityId,
-        target: EntityId,
-    },
-    RemoveEdge {
-        id: EdgeID,
-    },
-    RetrargetEdge {
-        id: EdgeID,
-        new_target: RetrargetEdge,
-    },
-
-    // ------------- END EDGE DELTA --------------
-
-    // ------------- START HYPER EDGE --------------
-    
-    CreateHyperEdge {
-        id: HyperEdgeId,
-        entities: Vec<EntityId>,
-    },
-    RemoveHyperEdge {
-        id: HyperEdgeId,
-    },
-    AddElementsToHyperEdge {
-        id: HyperEdgeId,
-        entities: Vec<EntityId>,
-    },
-    RemoveElementsFromHyperEdge {
-        id: HyperEdgeId,
-        entities: Vec<EntityId>,
-    },
-    MergeHyperEdge {
-        lhs: HyperEdgeId,
-        rhs: HyperEdgeId,
-    }
-    
-    // ------------- END HYPER EDGE --------------
-}
-
-type Object = HashMap<String, Field>;
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Field {
-    // Composite types
-    Array(Vec<Field>),
-    Object(Object),
-    // Fundamental types
-    String(String),
-    Bool(bool),
-    Number(i128),
-    Link(EntityId),
-    Null,
 }
 
 /// Triplet is a link beetween two entities
