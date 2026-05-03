@@ -93,19 +93,47 @@ impl Client {
     }
 }
 
+#[cfg(test)]
 mod tests {
+    use super::*;
+    use transports::in_memory_pair;
 
-    #[test]
-    fn test_call() {
-        unimplemented!()
+    #[tokio::test]
+    async fn test_call() {
+        let (transport, mut server) = in_memory_pair();
+        let client = Client::connect(Box::new(transport));
+
+        // Fake server: read each Call and echo `args` back as `ret`.
+        let server_task = tokio::spawn(async move {
+            while let Some(frame) = server.recv().await {
+                match frame {
+                    OutFrame::Call { id, args, .. } => {
+                        server.send(InFrame::Reply { id, ret: args }).await.unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let ret = client.call("ping".into(), vec![1, 2, 3]).await.unwrap();
+        assert_eq!(ret, vec![1, 2, 3]);
+
+        // Issue a second call to confirm id allocation works across requests.
+        let ret = client.call("pong".into(), vec![42]).await.unwrap();
+        assert_eq!(ret, vec![42]);
+
+        drop(client);
+        server_task.await.unwrap();
     }
 
     #[test]
+    #[ignore = "not implemented yet"]
     fn test_cold() {
         unimplemented!()
     }
 
     #[test]
+    #[ignore = "not implemented yet"]
     fn test_materialized() {
         unimplemented!()
     }
