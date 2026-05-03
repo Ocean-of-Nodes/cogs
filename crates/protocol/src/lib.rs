@@ -55,6 +55,8 @@ pub enum InFrame {
     SubscribeDelta { id: SubId, delta: Vec<Patch> },
     
     ColdInitialReply { id: RequestId, tracker: TrackerId, delta: Vec<Patch> },
+    /// Sended when hyper edge not found
+    ColdError { id: SubId },
     ColdDelta { id: RequestId, delta: Vec<Patch> }
 }
 
