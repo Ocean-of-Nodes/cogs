@@ -10,13 +10,15 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 /// An owned slash-separated path.
 ///
 /// The only valid forms are:
 /// - the empty string `""` (the root);
 /// - `/seg₁/seg₂/.../segₙ` where every `segᵢ` is non-empty and
 ///   contains no `/`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Path {
     /// Always either `""` (root) or `/seg/.../seg` — never `"/"`,
     /// never doubled slashes, never trailing slash.

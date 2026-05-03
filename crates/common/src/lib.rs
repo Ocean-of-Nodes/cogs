@@ -3,7 +3,13 @@ pub mod path;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+use serde::{Deserialize, Serialize};
+
 pub use path::Path;
+
+/// Used by db for tracker's that's accumulate changes 
+/// for caller that's want get it by next call
+pub type TrackerId = Uuid;
 
 /// Entity is a common type for nodes and edges and hyper edge
 pub type EntityId = Uuid;
@@ -18,7 +24,7 @@ pub type HyperEdgeId = Uuid;
 
 pub type Object = HashMap<String, Field>;
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum Field {
     // ------- START COMPOSITE TYPES --------------
     Array(Vec<Field>),
@@ -35,7 +41,7 @@ pub enum Field {
     // ------- END FUNDAMENTAL TYPES --------------
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ObjectDelta {
     AddField {
         name: String,
@@ -61,13 +67,13 @@ pub enum ObjectDelta {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RetrargetEdge {
     Source(EntityId),
     Target(EntityId),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Patch {
     // ------------- START NODE DELTA --------------
     AddNode {
