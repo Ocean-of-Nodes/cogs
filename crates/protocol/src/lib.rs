@@ -1,18 +1,20 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use serde::{Deserialize, Serialize};
+
 pub type RequestId = u64;
 pub type SubId = u64;
 
 /// Wire frame type of outgoing msg.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum OutFrame {
     Call { id: RequestId, name: String, args: Vec<u8> },
     Subscribe { sub: SubId, name: String },
 }
 
 /// Wire frame type of incoming msg.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum InFrame {
     Reply { id: RequestId, ret: Vec<u8> },
 }
@@ -20,7 +22,39 @@ pub enum InFrame {
 /// Failure mode of the underlying transport — I/O errors,
 /// codec failures, peer disconnects.
 #[derive(Debug)]
-pub enum TransportError {}
+pub enum TransportError {
+    /// Transport (or one of its halves) has been closed.
+    Closed,
+    /// Underlying I/O error.
+    Io(std::io::Error),
+    /// Frame failed to encode or decode.
+    Codec(String),
+}
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Closed => write!(f, "transport closed"),
+            Self::Io(e) => write!(f, "i/o error: {e}"),
+            Self::Codec(s) => write!(f, "codec error: {s}"),
+        }
+    }
+}
+
+impl std::error::Error for TransportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for TransportError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
 
 /// Bidirectional message stream — a duplex channel over which two
 /// peers exchange framed messages.
