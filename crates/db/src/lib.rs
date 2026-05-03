@@ -17,13 +17,13 @@ struct UnexistentPathError {
     /// then we will return error with valid_path_part = "/subgraph1"
     valid_path_part: PathBuf,
 }
-#[derive(Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct NodeAlreadyExistsError(NodeId);
 #[derive(Debug)]
 struct NodeNotFoundError(NodeId);
 #[derive(Debug)]
 struct EdgeNotFoundError(EdgeID);
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct MissingEndpointsError {
     missing_endpoints: Vec<Uuid>,
 }
@@ -35,7 +35,7 @@ struct IncorrectTypeError {
     actual_type: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum AddEdgeError {
     MissingEndpointsError(MissingEndpointsError),
     EdgeAlreadyExists(EdgeID),
@@ -59,7 +59,7 @@ enum RetargetError {
 }
 
 /// Triplet is a link beetween two entities
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct Triplet {
     id: EdgeID,
     source: EntityId,
@@ -68,26 +68,14 @@ struct Triplet {
 
 #[derive(Default)]
 struct Graph {
-    path: PathBuf,
+    /// Hold graph object
+    entities: HashMap<EntityId, Object>,
 
-    /// Triplet is a link beetween two entities
-    edges: Vec<Triplet>,
-    /// Storage for data attached to entity id.
-    entities: HashMap<EntityId, Field>,
+    /// Hold graph edges
+    edges: HashMap<EdgeID, (EntityId, EntityId)>,
 
-    /// Edges beetween subgraphs and parent graph
-    /// or beetween subgraphs, regardless level for example
-    /// parent have two subgraphs: subgraph1 and subgraph2,
-    /// and edge beetween them, then it will be in beetween_edges
-    beetween_edges: Vec<Triplet>,
-    /// Storage for data of edges beetween subgraphs and
-    /// parent graph or beetween subgraphs
-    beetween_edges_entities: HashMap<Uuid, Field>,
-    subgraphs: HashMap<String, Graph>,
-
-    /// Listeners thats will trigger when graph or holded
-    /// subgraph will be changed.
-    listeners: HashMap<ListernerID, Box<dyn Fn(Patch)>>,
+    /// Hold hyperedges
+    hyper_edge: HashMap<HyperEdgeId, Vec<EntityId>>,
 }
 
 impl Graph {
@@ -96,28 +84,17 @@ impl Graph {
 
     /// Iterate over all entities of the whole graph
     pub fn global_entities(&self) -> impl Iterator<Item = EntityId> {
-        let local_edges = self
-            .edges
-            .iter()
-            .flat_map(|edge| [edge.id, edge.source, edge.target]);
-        let beetween = self
-            .beetween_edges
-            .iter()
-            .flat_map(|edge| [edge.id, edge.source, edge.target]);
-        let mut iter: Box<dyn Iterator<Item = EntityId>> = Box::new(
-            local_edges
-                .chain(beetween)
-                .chain(self.entities.keys().copied())
-                .chain(self.beetween_edges_entities.keys().copied()),
-        );
-
-        for subgraph in self.subgraphs.values() {
-            iter = Box::new(iter.chain(subgraph.global_entities()));
-        }
-
-        iter.collect::<HashSet<_>>().into_iter()
+        self.entities
+            .keys()
+            .copied()
+            .chain(self.edges.keys().copied())
+            .chain(self.hyper_edge.keys().copied())
+            // We need here hashset for dedublication nodes and hyperedge/edge
+            .collect::<HashSet<_>>()
+            .into_iter()
     }
 
+    /*
     /// Iterate over all edges of the whole graph
     pub fn global_edges(&self) -> impl Iterator<Item = EdgeID> {
         let mut iter: Option<Box<dyn Iterator<Item = EdgeID>>> = None;
@@ -316,80 +293,60 @@ impl Graph {
         unimplemented!()
     }
 
-    /// Get field by entity id from the whole graph (including subgraphs),
+    */
+    /// Get obj by entity id from the whole graph,
     /// returns None if field doesn't exist
-    pub fn field(&self, id: &EntityId) -> Option<&Field> {
-        if let Some(field) = self.entities.get(id) {
-            return Some(field);
-        }
-
-        if let Some(field) = self.beetween_edges_entities.get(id) {
-            return Some(field);
-        }
-
-        for graph in self.subgraphs.values() {
-            if let Some(field) = graph.field(id) {
-                return Some(field);
-            }
-        }
-        None
+    pub fn obj(&self, id: &EntityId) -> Option<&Object> {
+        self.entities.get(id)
     }
 
-    /// Get triplet by id from the whole graph (including subgraphs),
+    /// Get triplet by id from the whole graph,
     /// returns None if edge doesn't exist
-    pub fn get_edge(&self, id: &EdgeID) -> Result<&Triplet, IncorrectTypeError> {
-        if !self.is_edge(id) {
-            return Err(IncorrectTypeError {
-                node_id: *id,
-                expected_type: "Edge".to_string(),
-                actual_type: match self.field(id) {
-                    Some(field) => format!("{:?}", field),
-                    _ => "None".to_string(),
-                },
+    pub fn get_edge(&self, id: &EdgeID) -> Result<Triplet, IncorrectTypeError> {
+        if let Some(pair) = self.edges.get(&id) {
+            return Ok(Triplet {
+                id: id.clone(),
+                source: pair.0.clone(),
+                target: pair.1.clone(),
             });
         }
 
-        if let Some(triplet) = self.edges.iter().find(|triplet| &triplet.id == id) {
-            return Ok(triplet);
-        }
-
-        if let Some(triplet) = self.beetween_edges.iter().find(|triplet| &triplet.id == id) {
-            return Ok(triplet);
-        }
-
-        for graph in self.subgraphs.values() {
-            if let Ok(triplet) = graph.get_edge(id) {
-                return Ok(triplet);
-            }
-        }
-        
-        unreachable!()
+        Err(IncorrectTypeError {
+            node_id: id.clone(),
+            expected_type: "Edge".into(),
+            actual_type: self.get_type(*id).into(),
+        })
     }
 
     /* ------------ END GETTERS -------------------- */
 
     /* ------------ START PROBS -------------------- */
 
+    pub fn get_type(&self, entity: EntityId) -> &str {
+        unimplemented!()
+    }
+
+    /*
     /// Check if id is edge from the whole graph,
     /// returns true if edge exists, false otherwise
     pub fn is_edge(&self, id: &EntityId) -> bool {
         self.global_edges().any(|edge_id| &edge_id == id)
     }
 
-    /// Check if id is node from the whole graph, 
+    /// Check if id is node from the whole graph,
     /// returns true if node exists, false otherwise
     pub fn is_node(&self, id: &EntityId) -> bool {
         self.global_nodes().any(|node_id| &node_id == id)
     }
-
+    */
     /// Check if id is node or edge from the whole graph,
     /// returns true if node or edge exists, false otherwise
     pub fn is_exist(&self, id: &EntityId) -> bool {
-        self.is_node(id) || self.is_edge(id)
+        self.global_entities().any(|e| &e == id)
     }
-
+    /*
     /// Check that `source` and `target` exist.
-    /// Returns [`MissingEndpointsError`] with unexist endpoints 
+    /// Returns [`MissingEndpointsError`] with unexist endpoints
     fn __ensure_endpoints_exist(
         &self,
         source: &EntityId,
@@ -528,7 +485,11 @@ impl Graph {
     /// Walks the parent path (all components except the last);
     /// the last component is the name under which `graph` will
     /// be inserted in that parent.
-    fn add_subgraph(&mut self, name: &PathBuf, mut graph: Graph) -> Result<(), UnexistentPathError> {
+    fn add_subgraph(
+        &mut self,
+        name: &PathBuf,
+        mut graph: Graph,
+    ) -> Result<(), UnexistentPathError> {
         let mut components = name.iter();
         let subgraph_name = components
             .next_back()
@@ -550,35 +511,42 @@ impl Graph {
                 });
             }
         }
-        graph.path = name.to_path_buf(); 
+        graph.path = name.to_path_buf();
         current_graph.subgraphs.insert(subgraph_name, graph);
         Ok(())
     }
+    */
+    fn create_hyperedge(&mut self, members: Vec<EntityId>) -> HyperEdgeId {
+        let id = Uuid::new_v4();
+        self.hyper_edge.insert(id, members);
+        id
+    }
 
-    fn __add_node_with_id(&mut self, id: Uuid, field: Field) -> Result<(), NodeAlreadyExistsError> {
-        if self.field(&id).is_some() {
+    fn __add_node_with_id(
+        &mut self,
+        id: NodeId,
+        obj: Object,
+    ) -> Result<(), NodeAlreadyExistsError> {
+        if self.entities.contains_key(&id) {
             return Err(NodeAlreadyExistsError(id));
         }
 
-        self.entities.insert(id, field);
+        self.entities.insert(id, obj);
         Ok(())
     }
 
-    pub fn add_node(&mut self, field: Field) -> Result<Uuid, NodeAlreadyExistsError> {
+    pub fn add_node(&mut self, obj: Object) -> NodeId {
         let id = Uuid::new_v4();
-        self.__add_node_with_id(id, field).map(|_| id)
+        self.__add_node_with_id(id, obj);
+        id
     }
 
     fn __add_edge_with_id(
         &mut self,
         id: Uuid,
-        source: Uuid,
-        target: Uuid,
+        source: EntityId,
+        target: EntityId,
     ) -> Result<(), AddEdgeError> {
-        if self.get_edge(&id).is_some() {
-            return Err(AddEdgeError::EdgeAlreadyExists(id));
-        }
-
         let source_exists = self.is_exist(&source);
         let target_exists = self.is_exist(&target);
         if !source_exists || !target_exists {
@@ -594,25 +562,21 @@ impl Graph {
             }));
         }
 
-        let triplet = Triplet { source, target, id };
-        let source_local =
-            self.entities.contains_key(&source) || self.edges.iter().any(|t| t.id == source);
-        let target_local =
-            self.entities.contains_key(&target) || self.edges.iter().any(|t| t.id == target);
-        if source_local && target_local {
-            self.edges.push(triplet);
-        } else {
-            self.beetween_edges.push(triplet);
+        if self.edges.contains_key(&id) {
+            return Err(AddEdgeError::EdgeAlreadyExists(id));
         }
+
+        self.edges.insert(id, (source, target));
         Ok(())
     }
 
-    pub fn add_edge(&mut self, source: Uuid, target: Uuid) -> Result<EdgeID, AddEdgeError> {
+    pub fn add_edge(&mut self, source: EntityId, target: EntityId) -> Result<EdgeID, AddEdgeError> {
         let edge_id = Uuid::new_v4();
         self.__add_edge_with_id(edge_id, source, target)
             .map(|_| edge_id)?;
         Ok(edge_id)
     }
+    /*
     /* ------------ END CONSTRUCTORS ------------- */
 
     /* ------------ START DESTRUCTORS ----------- */
@@ -711,11 +675,219 @@ impl Graph {
         self.listeners.remove(&id);
     }
     /* ------------ END LISTENERS ------------- */
+    */
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    fn create_simple_obj(field_name: &str) -> Object {
+        let mut obj = Object::new();
+        obj.insert(field_name.into(), Field::Null);
+        obj
+    }
+
+    mod test_globals {
+        use super::*;
+
+        mod test_global_entities {
+            use super::*;
+
+            /// Simple case we just check that all
+            /// kind of entities iterator yeld
+            #[test]
+            fn test_global_entities1() {
+                let mut g = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let n3 = g.add_node(obj.clone());
+                let n4 = g.add_node(obj.clone());
+
+                let e1 = g.add_edge(n1, n2).unwrap();
+                let e2 = g.add_edge(n3, n4).unwrap();
+                let e3 = g.add_edge(e1, e2).unwrap();
+                let e4 = g.add_edge(e3, n2).unwrap();
+
+                let h = g.create_hyperedge(vec![n1, n3]);
+                let e5 = g.add_edge(h, e4).unwrap();
+
+                let mut expected = HashSet::new();
+                expected.insert(n1);
+                expected.insert(n2);
+                expected.insert(n3);
+                expected.insert(n4);
+                expected.insert(e1);
+                expected.insert(e2);
+                expected.insert(e3);
+                expected.insert(e4);
+                expected.insert(e5);
+                expected.insert(h);
+
+                let actual: Vec<_> = g.global_entities().collect();
+
+                // 1. No duplicates: every entity appears at most once.
+                let mut counts: HashMap<EntityId, usize> = HashMap::new();
+                for e in &actual {
+                    *counts.entry(*e).or_insert(0) += 1;
+                }
+                let duplicates: Vec<_> = counts
+                    .iter()
+                    .filter(|(_, c)| **c > 1)
+                    .map(|(e, c)| (*e, *c))
+                    .collect();
+                if !duplicates.is_empty() {
+                    panic!("global_entities returned duplicates: {:?}", duplicates);
+                }
+
+                // 2. Coverage matches exactly: no missing, no extras.
+                let actual_set: HashSet<_> = actual.iter().copied().collect();
+                let missing: Vec<_> = expected.difference(&actual_set).copied().collect();
+                let unexpected: Vec<_> = actual_set.difference(&expected).copied().collect();
+                if !missing.is_empty() || !unexpected.is_empty() {
+                    panic!(
+                        "global_entities mismatch — missing: {:?}, unexpected: {:?}",
+                        missing, unexpected
+                    );
+                }
+            }
+
+            /// Checks thats dedublication
+            /// for node and edge\hyperedge work
+            #[test]
+            fn test_global_entities2() {}
+        }
+    }
+
+    mod test_probs {
+        use super::*;
+
+        mod test_is_exist {
+            use super::*;
+            /// Test exist node
+            #[test]
+            fn test_is_exist1() {
+                let mut g = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                assert!(g.is_exist(&n1))
+            }
+
+            /// Test exist edge
+            #[test]
+            fn test_is_exist2() {}
+
+            /// Test exist hyperedge
+            #[test]
+            fn test_is_exist3() {}
+        }
+    }
+
+    mod test_constructors {
+        use super::*;
+
+        mod test_add_node {
+            use super::*;
+
+            /// Simple case we add node and check that's is exist
+            #[test]
+            fn test_add_node1() {
+                let mut graph = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let node_id = graph.add_node(obj.clone());
+                assert_eq!(graph.obj(&node_id), Some(&obj));
+            }
+
+            /// Check error node elready exist
+            #[test]
+            fn test_add_node2() {
+                let mut graph = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let n1 = graph.add_node(obj.clone());
+                let obj2 = create_simple_obj("test_field2");
+                let result2 = graph.__add_node_with_id(n1, obj2.clone());
+                assert_eq!(
+                    result2.clone().unwrap_err(),
+                    NodeAlreadyExistsError(result2.unwrap_err().0)
+                );
+                // Check thats change doesnt apply
+                assert_eq!(graph.obj(&n1), Some(&obj))
+            }
+        }
+
+        mod test_add_edge {
+            use super::*;
+
+            /// Create simple edge
+            #[test]
+            fn test_add_edge1() {
+                let mut g = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+
+                let e1 = g.add_edge(n1, n2).unwrap();
+                assert_eq!(
+                    g.get_edge(&e1).unwrap(),
+                    Triplet {
+                        id: e1,
+                        source: n1,
+                        target: n2,
+                    }
+                )
+            }
+
+            /// Self-loop: an edge with both endpoints equal is allowed.
+            #[test]
+            fn test_add_edge2() {
+                let mut g = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+
+                let e1 = g.add_edge(n1, n1).unwrap();
+                assert_eq!(
+                    g.get_edge(&e1).unwrap(),
+                    Triplet {
+                        id: e1,
+                        source: n1,
+                        target: n1,
+                    }
+                )
+            }
+
+            /// Unexisten targets
+            #[test]
+            fn test_add_edge3() {
+                let mut g = Graph::default();
+                let n1 = Uuid::new_v4();
+                let n2 = Uuid::new_v4();
+
+                let err = g.add_edge(n1, n2).unwrap_err();
+                assert_eq!(
+                    err,
+                    AddEdgeError::MissingEndpointsError(MissingEndpointsError {
+                        missing_endpoints: vec![n1, n2],
+                    })
+                )
+            }
+
+            /// Edge already exist
+            #[test]
+            fn test_add_edge4() {
+                let mut g = Graph::default();
+                let obj = create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+
+                let e1 = g.add_edge(n1, n2).unwrap();
+                let err = g.__add_edge_with_id(e1, n1, n2).unwrap_err();
+                assert_eq!(err, AddEdgeError::EdgeAlreadyExists(e1))
+            }
+        }
+    }
+
+    /*
     mod test_constructors_and_getters {
         use super::*;
 
@@ -819,16 +991,6 @@ mod tests {
         }
 
         // TODO: test_get_edges in different subgraphs
-
-        #[test]
-        fn test_add_node() {
-            let mut graph = Graph::default();
-            let field = Field::String("test".to_string());
-            let result = graph.add_node(field.clone());
-            assert!(result.is_ok());
-            let node_id = result.unwrap();
-            assert_eq!(graph.field(&node_id), Some(&field));
-        }
 
         #[test]
         fn test_add_edge() {
@@ -986,5 +1148,5 @@ mod tests {
             graph.global_nodes().for_each(|_| {});
         }
     }
+    */
 }
-

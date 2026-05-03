@@ -9,11 +9,32 @@ use tokio::task::JoinHandle;
 use errors::*;
 use protocol::*;
 
-pub struct ImmutableGraph {/* TODO */}
+#[derive(Default)]
+pub struct ImmutableGraph {
+    /// Hold graph object
+    entities: HashMap<EntityId, Object>,
+
+    /// Hold graph edges
+    edges: HashMap<EdgeID, (EntityId, EntityId)>,
+
+    /// Hold hyperedges
+    hyper_edge: HashMap<HyperEdgeId, Vec<EntityId>>,
+
+    /// Tracks external endpoints of a hyperedge
+    external: HashMap<HyperEdgeId, Vec<EntityId>>, 
+}
 
 impl ImmutableGraph {
     pub fn new(snapshot: Vec<Patch>) -> Self {
-        todo!()
+        debug_assert!(is_delta_order_valid(&snapshot));
+
+        let mut g = Self::default();
+        g.apply_delta(snapshot);
+        g
+    }
+
+    fn apply_delta(&mut self, snapshot: Vec<Patch>) {
+
     }
 }
 
