@@ -14,18 +14,48 @@ pub enum OutFrame {
     Call {
         id: RequestId,
         name: String,
-        args: Vec<u8>,
+        args: Vec<HyperEdgeId>,
     },
+    
     Subscribe {
         sub: SubId,
-        name: String,
+        name: HyperEdgeId,
     },
+    Unsubscribe {
+        sub: SubId,
+    },
+    
+    Cold {
+        id: RequestId,
+        name: HyperEdgeId,
+    },
+    ColdRequestDelta {
+        id: RequestId,
+        tracker: TrackerId
+    },
+    ColdDropTracker {
+        tracker: TrackerId
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum CallError {
+    /// Content correct number of args
+    IncorrectNumberOfArgs(u8),
+    /// Content not founded hyper edges
+    ArgumentNotFound(Vec<HyperEdgeId>)
 }
 
 /// Wire frame type of incoming msg.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum InFrame {
-    Reply { id: RequestId, ret: Vec<u8> },
+    CallReply { id: RequestId, ret: Result<Vec<Patch>, CallError> },
+    /// Sended when hyper edge not found
+    SubscribeError { id: SubId },
+    SubscribeDelta { id: SubId, delta: Vec<Patch> },
+    
+    ColdInitialReply { id: RequestId, tracker: TrackerId, delta: Vec<Patch> },
+    ColdDelta { id: RequestId, delta: Vec<Patch> }
 }
 
 /// Failure mode of the underlying transport — I/O errors,
