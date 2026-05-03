@@ -276,20 +276,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol::HyperEdgeId;
     use tokio::net::TcpListener;
+
+    fn arg_a() -> HyperEdgeId {
+        HyperEdgeId::from_u128(0xa)
+    }
+    fn arg_b() -> HyperEdgeId {
+        HyperEdgeId::from_u128(0xb)
+    }
 
     fn sample_call() -> OutFrame {
         OutFrame::Call {
             id: 1,
             name: "echo".into(),
-            args: vec![1, 2, 3],
+            args: vec![arg_a(), arg_b()],
         }
     }
 
     fn sample_reply() -> InFrame {
-        InFrame::Reply {
+        InFrame::CallReply {
             id: 1,
-            ret: vec![9, 9],
+            ret: Ok(vec![]),
         }
     }
 
@@ -302,17 +310,19 @@ mod tests {
             OutFrame::Call { id, name, args } => {
                 assert_eq!(id, 1);
                 assert_eq!(name, "echo");
-                assert_eq!(args, vec![1, 2, 3]);
+                assert_eq!(args, vec![arg_a(), arg_b()]);
             }
             _ => panic!("unexpected frame"),
         }
 
         server.send(sample_reply()).await.unwrap();
         match client.recv().await.unwrap().expect("recv yielded None") {
-            InFrame::Reply { id, ret } => {
+            InFrame::CallReply { id, ret } => {
                 assert_eq!(id, 1);
-                assert_eq!(ret, vec![9, 9]);
+                let patches = ret.expect("call should succeed");
+                assert!(patches.is_empty());
             }
+            other => panic!("unexpected frame: {other:?}"),
         }
     }
 
@@ -363,10 +373,12 @@ mod tests {
         client.send(sample_call()).await.unwrap();
 
         match client.recv().await.unwrap().expect("recv yielded None") {
-            InFrame::Reply { id, ret } => {
+            InFrame::CallReply { id, ret } => {
                 assert_eq!(id, 1);
-                assert_eq!(ret, vec![9, 9]);
+                let patches = ret.expect("call should succeed");
+                assert!(patches.is_empty());
             }
+            other => panic!("unexpected frame: {other:?}"),
         }
 
         server.await.unwrap();
@@ -388,10 +400,12 @@ mod tests {
         client.send(sample_call()).await.unwrap();
 
         match client.recv().await.unwrap().expect("recv yielded None") {
-            InFrame::Reply { id, ret } => {
+            InFrame::CallReply { id, ret } => {
                 assert_eq!(id, 1);
-                assert_eq!(ret, vec![9, 9]);
+                let patches = ret.expect("call should succeed");
+                assert!(patches.is_empty());
             }
+            other => panic!("unexpected frame: {other:?}"),
         }
 
         server.await.unwrap();
