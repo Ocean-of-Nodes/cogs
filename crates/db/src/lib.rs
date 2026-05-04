@@ -66,6 +66,12 @@ enum AttachNodeError {
     IncorrectType(IncorrectTypeError),
 }
 
+#[derive(Debug)]
+enum GetEdgeError {
+    NotFound(EntityNotFoundError),
+    IncorrectType(IncorrectTypeError),
+}
+
 /// Triplet is a link beetween two entities
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Triplet {
@@ -362,22 +368,31 @@ impl Graph {
         self.entities.get(id)
     }
 
-    /// Get triplet by id from the whole graph,
-    /// returns None if edge doesn't exist
-    pub fn get_edge(&self, id: &EdgeID) -> Result<Triplet, IncorrectTypeError> {
-        if let Some(pair) = self.edges.get(&id) {
+    /// Get a triplet by id.
+    ///
+    /// # Errors
+    ///
+    /// - [`GetEdgeError::NotFound`] — `id` is not registered anywhere
+    ///   in the graph.
+    /// - [`GetEdgeError::IncorrectType`] — `id` exists, but it's a
+    ///   different kind of entity (Node, HyperEdge, AttachedObject).
+    pub fn get_edge(&self, id: &EdgeID) -> Result<Triplet, GetEdgeError> {
+        if let Some(pair) = self.edges.get(id) {
             return Ok(Triplet {
-                id: id.clone(),
-                source: pair.0.clone(),
-                target: pair.1.clone(),
+                id: *id,
+                source: pair.0,
+                target: pair.1,
             });
         }
 
-        Err(IncorrectTypeError {
-            node_id: id.clone(),
-            expected_type: vec!["Edge".to_string()],
-            actual_type: self.get_type(*id).to_string(),
-        })
+        match self.get_type(*id) {
+            None => Err(GetEdgeError::NotFound(EntityNotFoundError(*id))),
+            Some(ty) => Err(GetEdgeError::IncorrectType(IncorrectTypeError {
+                node_id: *id,
+                expected_type: vec!["Edge".to_string()],
+                actual_type: ty.to_string(),
+            })),
+        }
     }
 
     /* ------------ END GETTERS -------------------- */
@@ -705,11 +720,10 @@ impl Graph {
     */
 
     fn attach_obj(&mut self, target: AttachTargetID, obj: Object) -> Result<(), AttachNodeError> {
-        if !self.is_exist(&target) {
-            return Err(AttachNodeError::AttachTargetNotFound);
-        }
-
-        let ty = self.get_type(target);
+        let ty = match self.get_type(target) {
+            Some(t) => t,
+            None => return Err(AttachNodeError::AttachTargetNotFound),
+        };
         if !ty.is_attach_target() {
             return Err(AttachNodeError::IncorrectType(IncorrectTypeError {
                 node_id: target,
