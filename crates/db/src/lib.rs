@@ -1,3 +1,5 @@
+mod methods;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -77,15 +79,23 @@ enum EntityType {
     Edge,
     HyperEdge,
     MetaEdge,
+    AttachedObject,
 }
 
 impl EntityType {
     fn is_attach_target(&self) -> bool {
         match self {
-            EntityType::Node => false,
-            EntityType::Edge => true,
-            EntityType::HyperEdge => true,
-            EntityType::MetaEdge => true,
+            EntityType::Node | EntityType::AttachedObject => false,
+            EntityType::Edge | EntityType::HyperEdge | EntityType::MetaEdge => true,
+        }
+    }
+
+    fn is_can_contains_object(&self) -> bool {
+        match self {
+            EntityType::Node | EntityType::Edge | EntityType::HyperEdge | EntityType::MetaEdge => {
+                true
+            }
+            EntityType::AttachedObject => false,
         }
     }
 }
@@ -97,6 +107,7 @@ impl Into<&'static str> for EntityType {
             EntityType::Edge => "Edge",
             EntityType::HyperEdge => "HyperEdge",
             EntityType::MetaEdge => "MetaEdge",
+            EntityType::AttachedObject => "AttachedObject",
         }
     }
 }
@@ -108,6 +119,7 @@ impl std::fmt::Display for EntityType {
             EntityType::Edge => "Edge",
             EntityType::HyperEdge => "HyperEdge",
             EntityType::MetaEdge => "MetaEdge",
+            EntityType::AttachedObject => "AttachedObject",
         })
     }
 }
@@ -164,13 +176,23 @@ impl Graph {
         self.hyper_edge.keys().copied()
     }
 
-    pub fn iter_attached(&self) -> impl Iterator<Item = AttachTargetID> {
-        todo!()
+    /// Iterate over ids that have an object attached on top of an
+    /// edge or hyperedge (the "attach targets" — see
+    /// [`AttachTargetID`]).
+    ///
+    /// In other words: entries in `entities` whose id is *also* a
+    /// key in `edges` or `hyper_edge`. This is the complement of
+    /// [`Graph::iter_nodes`] within `entities`.
+    pub fn iter_attached(&self) -> impl Iterator<Item = AttachTargetID> + '_ {
+        self.entities
+            .keys()
+            .copied()
+            .filter(|id| self.edges.contains_key(id) || self.hyper_edge.contains_key(id))
     }
     // ------------ END ROOTS ------------------- //
     /*
     /* ------------ START GETTERS ------------------- */
-    
+
     /// Get subgraph by path, returns None if subgraph doesn't exist
     pub fn subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
         let mut current_graph = self;
@@ -362,20 +384,51 @@ impl Graph {
 
     /* ------------ START PROBS -------------------- */
 
-    pub fn get_type(&self, entity: EntityId) -> EntityType {
-        if let Some((source, target)) = self.edges.get(&entity) {
-            // Meta-edge if either endpoint is itself an edge or hyperedge.
+    /// Classify `entity`. Returns `None` if the id isn't registered
+    /// anywhere in the graph.
+    ///
+    /// Resolution order:
+    /// - id in `entities` AND also in `edges` / `hyper_edge`
+    ///   → `AttachedObject` — the entry in `entities` represents an
+    ///   object attached on top of a structural element via
+    ///   [`attach_obj`]. Returning `AttachedObject` here is what
+    ///   makes `attach_obj` reject double-attachment (because
+    ///   `AttachedObject::is_attach_target() == false`).
+    /// - id in `edges` only:
+    ///     - if at least one endpoint is itself an edge or
+    ///       hyperedge → `MetaEdge`
+    ///     - otherwise → `Edge`
+    /// - id in `hyper_edge` only → `HyperEdge`
+    /// - id in `entities` only → `Node`
+    pub fn get_type(&self, entity: EntityId) -> Option<EntityType> {
+        let in_entities = self.entities.contains_key(&entity);
+        let in_edges = self.edges.contains_key(&entity);
+        let in_hyper = self.hyper_edge.contains_key(&entity);
+
+        if !in_entities && !in_edges && !in_hyper {
+            return None;
+        }
+
+        if in_entities && (in_edges || in_hyper) {
+            return Some(EntityType::AttachedObject);
+        }
+
+        if in_edges {
+            let (source, target) = self.edges.get(&entity).expect("checked above");
             let is_meta_endpoint =
                 |e: &EntityId| self.edges.contains_key(e) || self.hyper_edge.contains_key(e);
             if is_meta_endpoint(source) || is_meta_endpoint(target) {
-                return EntityType::MetaEdge;
+                return Some(EntityType::MetaEdge);
             }
-            return EntityType::Edge;
+            return Some(EntityType::Edge);
         }
-        if self.hyper_edge.contains_key(&entity) {
-            return EntityType::HyperEdge;
+
+        if in_hyper {
+            return Some(EntityType::HyperEdge);
         }
-        EntityType::Node
+
+        // Only in `entities` and not collided with any structural map.
+        Some(EntityType::Node)
     }
 
     /*
