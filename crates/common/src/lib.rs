@@ -11,9 +11,17 @@ pub use path::Path;
 /// for caller that's want get it by next call
 pub type TrackerId = Uuid;
 
-/// Entity is a common type for nodes/edges/hyperedge
+/// Entity is a common type for nodes/edges/metaedge/hyperedge
 pub type EntityId = Uuid;
-/// Target edges/hyperedge for thats object can be attached 
+
+/// Endpoint type
+pub enum PointeeTargetId {
+    EntityId(EntityId),
+    Path(Path),
+}
+
+/// Target edges/metaedge/hyperedge for thats object 
+/// can be attached 
 pub type AttachTargetID = Uuid;
 /// Node is an ends of edges that's not edge,
 /// but contains data as object
