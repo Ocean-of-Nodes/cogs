@@ -1195,6 +1195,36 @@ mod tests {
                 // not a destination, so it must not appear.
                 assert!(!neighbours.contains(&e_a));
             }
+
+            /// `id` must not appear in its own neighbours list when
+            /// it is a member of a hyperedge that includes it.
+            /// Guards specifically against a regression where the
+            /// iteration over hyperedge members forgets the
+            /// `m != id` skip.
+            #[test]
+            fn test_neighbours4() {
+                // Built graph:
+                // ```text
+                //   h = {n1, n2}
+                // ```
+                let mut graph = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+
+                let n1 = graph.add_node(obj.clone());
+                let n2 = graph.add_node(obj.clone());
+
+                let _h = graph.create_hyperedge(vec![n1, n2]);
+
+                let neighbours: HashSet<_> =
+                    graph.neighbours(&n1).unwrap().into_iter().collect();
+
+                assert!(
+                    !neighbours.contains(&n1),
+                    "n1 must not be listed as its own neighbour"
+                );
+                let expected: HashSet<_> = [n2].into_iter().collect();
+                assert_eq!(neighbours, expected);
+            }
         }
     }
 
