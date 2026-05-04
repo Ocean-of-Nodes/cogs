@@ -328,6 +328,19 @@ impl Graph {
         Ok(edges)
     }
 
+    /// Get obj by entity id from the whole graph,
+    /// returns None if field doesn't exist
+    pub fn obj(&self, id: &EntityId) -> Option<&Object> {
+        self.entities.get(id)
+    }
+
+    /// Return all path from one node to another
+    /// 
+    /// The direction of the edges is not taken into account
+    pub fn undirected_paths(&mut self, lhs: NodeId, rhs: NodeId) -> Graph {
+        unimplemented!()
+    }
+
     /*
     pub fn out_nodes() {
         unimplemented!()
@@ -337,16 +350,7 @@ impl Graph {
         unimplemented!()
     }
 
-    pub fn get_paths() {
-        unimplemented!()
-    }
-
     */
-    /// Get obj by entity id from the whole graph,
-    /// returns None if field doesn't exist
-    pub fn obj(&self, id: &EntityId) -> Option<&Object> {
-        self.entities.get(id)
-    }
 
     /// Get a triplet by id.
     ///
@@ -1279,6 +1283,30 @@ mod tests {
                 // n1 is a Node: its object came from `add_node`,
                 // independent of any attach. It must still be there.
                 assert!(graph.obj(&n1).is_some());
+            }
+        }
+
+        mod test_undirected_paths {
+            use super::*;
+
+            #[test]
+            fn undirected_paths() {
+                // Built graph:
+                // ```text
+                // 
+                //  n1--------------e1-----------n2
+                //  \                          / |
+                //   \          /------e3------  |
+                //    ---e2---n3-----------e4----|
+                // ```
+                let mut graph = Graph::default();
+                let obj = test_utils::create_simple_obj("attached");
+
+                let n1 = graph.add_node(obj.clone());
+                let n2 = graph.add_node(obj.clone());
+                let n3 = graph.add_node(obj.clone());
+
+                /* TODO */
             }
         }
     }
