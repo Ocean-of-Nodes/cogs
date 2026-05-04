@@ -12,16 +12,6 @@ Object fields are dynamically typed: string, number, bool, null, or link. A link
 
 A node can be *free* — having no incoming or outgoing edges and not being a member of any hyperedge.
 
-## Edges
-
-An edge is a directed link between any two entities — nodes, suboject, edges, or hyperedges — so any combination of endpoints is allowed, including self-loops.
-
-An edge whose at least one endpoint is itself an edge or hyperedge is called a *metaedge*. Metaedge is a classification, not a separate storage type: every metaedge is just an edge.
-
-## Hyperedges
-
-A hyperedge groups an arbitrary number of pointees (entities or subobjects) without imposing direction or pairing.
-
 ## Subobjects
 
 A *subobject* is a field inside an entity's `Object` whose value is itself an `Object` (or any nested field reachable through a chain of object-typed fields). A subobject has **no identity of its own**: it doesn't appear in `iter_entities`, has no UUID, and is addressed by a `Path` of the form `<entity-uuid>/<field>[/<field>...]`.
@@ -36,18 +26,19 @@ Subobjects **can** be:
 - a member of a hyperedge,
 - the target of a `Field::Link` (i.e. `Pointee::Path`).
 
+## Edges
+
+An edge is a directed link between any two entities — nodes, suboject, edges, or hyperedges — so any combination of endpoints is allowed, including self-loops.
+
+An edge whose at least one endpoint is itself an edge or hyperedge is called a *metaedge*. Metaedge is a classification, not a separate storage type: every metaedge is just an edge.
+
+## Hyperedges
+
+A hyperedge groups an arbitrary number of pointees (entities or subobjects) without imposing direction or pairing.
+
 ## Attached objects
 
 An *attached object* is an `Object` that piggy-backs on top of an edge or hyperedge, sharing its UUID. It lets structural elements (edges, hyperedges) carry data without introducing a proxy node.
-
-Attached objects vs subobjects — easy to confuse, important to keep apart:
-
-|                                   | Subobject                                             | Attached object                                                      |
-| --------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------- |
-| Has an id?                        | No, addressed by `Path`                               | Yes, shares the id of the edge/hyperedge it's attached to            |
-| Lives where?                      | Inside another `Object` (any depth)                   | At the top level of `entities`, keyed by the structural element's id |
-| Created by?                       | An `Object` field whose value is `Field::Object(...)` | `attach_obj(edge_or_hyperedge_id, obj)`                              |
-| Can host its own attached object? | No                                                    | No (an edge/hyperedge gets at most one)                              |
 
 ## Invariants
 
