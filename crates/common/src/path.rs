@@ -1,53 +1,54 @@
-//! Slash-separated path used to address nested objects.
-//! A simpler analogue of [`std::path::PathBuf`]:
+//! Path — global address of a sub-object inside an entity.
 //!
-//! - Both `""` and `"/"` represent the **root**; iterating either
-//!   yields no segments.
-//! - `"/s1/s2"` iterates as `"s1"`, `"s2"`.
-//! - Anything else — missing leading slash, trailing slash, double
-//!   slashes, segments with embedded slashes — is rejected with a
-//!   [`PathError`]. The path is canonical by construction.
+//! A `Path` is `<uuid>/<seg₁>[/<seg₂>...]`: a UUID identifying the
+//! entity, followed by **at least one** field-name segment naming
+//! the location inside that entity's `Object`. There is no "root"
+//! form — to refer to an entity as a whole, use
+//! [`Pointee::EntityId`](crate::Pointee::EntityId).
 
 use std::fmt;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-/// An owned slash-separated path.
-///
-/// The only valid forms are:
-/// - the empty string `""` (the root);
-/// - `/seg₁/seg₂/.../segₙ` where every `segᵢ` is non-empty and
-///   contains no `/`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+use crate::EntityId;
+use crate::local_path::{LocalPath, PathError as LocalError};
+
+/// An owned `<uuid>/<seg₁>[/<seg₂>...]` path.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Path {
-    /// Always either `""` (root) or `/seg/.../seg` — never `"/"`,
-    /// never doubled slashes, never trailing slash.
-    inner: String,
+    entity: EntityId,
+    /// Always non-root.
+    local: LocalPath,
 }
 
-/// Reasons a string can fail to be a valid [`Path`] (or a segment
-/// can fail to be appended).
+/// Reasons a string can fail to be a valid [`Path`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathError {
-    /// A segment is empty (e.g. `"//"`, `"/a//b"`, `push("")`).
-    EmptySegment,
-    /// A non-root path doesn't start with `/`.
-    MissingLeadingSlash,
-    /// A non-root path ends with `/` (e.g. `"/a/"`). The only
-    /// path that may be a single slash is the root, written `"/"`.
-    TrailingSlash,
-    /// A pushed segment contains an internal slash. Use
-    /// [`Path::parse`] if you want to admit a multi-segment string.
-    SegmentContainsSlash,
+    /// First component isn't a valid UUID.
+    InvalidUuid,
+    /// The UUID has no field segments after it. `Path` does not admit
+    /// a root form.
+    MissingSegments,
+    /// The local part of the path failed to parse.
+    Local(LocalError),
+}
+
+impl From<LocalError> for PathError {
+    fn from(e: LocalError) -> Self {
+        PathError::Local(e)
+    }
 }
 
 impl fmt::Display for PathError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptySegment => f.write_str("empty path segment"),
-            Self::MissingLeadingSlash => f.write_str("path must start with `/`"),
-            Self::TrailingSlash => f.write_str("path must not end with `/`"),
-            Self::SegmentContainsSlash => f.write_str("segment must not contain `/`"),
+            Self::InvalidUuid => f.write_str("first component must be a valid UUID"),
+            Self::MissingSegments => {
+                f.write_str("path must have at least one field segment after the UUID")
+            }
+            Self::Local(e) => write!(f, "local path: {e}"),
         }
     }
 }
@@ -55,75 +56,53 @@ impl fmt::Display for PathError {
 impl std::error::Error for PathError {}
 
 impl Path {
-    /// Construct a root path.
-    pub const fn new() -> Self {
-        Self {
-            inner: String::new(),
-        }
+    /// Build a path from an entity id and at least one field segment.
+    pub fn new(entity: EntityId, first_segment: &str) -> Result<Self, PathError> {
+        let mut local = LocalPath::new();
+        local.push(first_segment)?;
+        Ok(Self { entity, local })
     }
 
-    /// Parse a slash-separated string. Accepts `""` and `"/"` as the
-    /// root, and `/s1/s2/.../sn` for any non-zero `n`. Rejects every
-    /// non-canonical form.
+    /// Build a path from an entity id and a non-root [`LocalPath`].
+    /// Returns [`PathError::MissingSegments`] if `local` is the root.
+    pub fn from_parts(entity: EntityId, local: LocalPath) -> Result<Self, PathError> {
+        if local.is_root() {
+            return Err(PathError::MissingSegments);
+        }
+        Ok(Self { entity, local })
+    }
+
+    /// Parse a string of the form `<uuid>/<seg₁>[/<seg₂>...]`.
     pub fn parse(s: &str) -> Result<Self, PathError> {
-        if s.is_empty() || s == "/" {
-            return Ok(Self::new());
+        let (head, tail) = s.split_once('/').ok_or(PathError::MissingSegments)?;
+        let entity = Uuid::parse_str(head).map_err(|_| PathError::InvalidUuid)?;
+        if tail.is_empty() {
+            return Err(PathError::MissingSegments);
         }
-        if !s.starts_with('/') {
-            return Err(PathError::MissingLeadingSlash);
-        }
-        if s.ends_with('/') {
-            return Err(PathError::TrailingSlash);
-        }
-        // Walk segments after the leading `/`. Any empty one means a
-        // doubled slash.
-        for seg in s[1..].split('/') {
-            if seg.is_empty() {
-                return Err(PathError::EmptySegment);
-            }
-        }
-        Ok(Self {
-            inner: s.to_owned(),
-        })
+        // LocalPath wants a leading `/` for non-root inputs.
+        let local = LocalPath::parse(&format!("/{tail}"))?;
+        Ok(Self { entity, local })
     }
 
-    /// Append a single segment. The segment must be non-empty and
-    /// must not contain `/`. To add multiple segments, call `push`
-    /// multiple times.
-    pub fn push(&mut self, segment: &str) -> Result<(), PathError> {
-        if segment.is_empty() {
-            return Err(PathError::EmptySegment);
-        }
-        if segment.contains('/') {
-            return Err(PathError::SegmentContainsSlash);
-        }
-        self.inner.push('/');
-        self.inner.push_str(segment);
-        Ok(())
+    /// The entity this path addresses.
+    pub fn entity(&self) -> EntityId {
+        self.entity
     }
 
-    /// `true` if the path has no segments.
-    pub fn is_root(&self) -> bool {
-        self.inner.is_empty()
+    /// The local navigation inside the entity's object.
+    pub fn local(&self) -> &LocalPath {
+        &self.local
     }
 
-    /// Iterate path segments.
-    pub fn iter(&self) -> Iter<'_> {
-        Iter {
-            // Skip the leading `/` (if any) so split doesn't yield a
-            // leading empty segment.
-            inner: self
-                .inner
-                .strip_prefix('/')
-                .unwrap_or(&self.inner)
-                .split('/'),
-            done: self.inner.is_empty(),
-        }
+    /// Append a single field segment.
+    pub fn push(&mut self, segment: &str) -> Result<(), LocalError> {
+        self.local.push(segment)
     }
 
-    /// Borrow the underlying string. The root form is always `""`.
-    pub fn as_str(&self) -> &str {
-        &self.inner
+    /// Iterate over field segments. Does **not** yield the UUID — use
+    /// [`Path::entity`] for that.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.local.iter()
     }
 }
 
@@ -141,40 +120,17 @@ impl TryFrom<String> for Path {
     }
 }
 
+impl FromStr for Path {
+    type Err = PathError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
 impl fmt::Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.inner.is_empty() {
-            f.write_str("/")
-        } else {
-            f.write_str(&self.inner)
-        }
-    }
-}
-
-impl<'a> IntoIterator for &'a Path {
-    type Item = &'a str;
-    type IntoIter = Iter<'a>;
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-/// Iterator over the segments of a [`Path`].
-pub struct Iter<'a> {
-    inner: std::str::Split<'a, char>,
-    /// `true` when the path was empty — `Split` over `""` would yield
-    /// one empty item, which we don't want.
-    done: bool,
-}
-
-impl<'a> Iterator for Iter<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<&'a str> {
-        if self.done {
-            return None;
-        }
-        self.inner.next()
+        // LocalPath display is `/seg/seg…` for non-root.
+        write!(f, "{}{}", self.entity, self.local)
     }
 }
 
@@ -182,93 +138,111 @@ impl<'a> Iterator for Iter<'a> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn empty_string_is_root() {
-        let p = Path::parse("").unwrap();
-        assert!(p.is_root());
-        assert!(p.iter().next().is_none());
+    fn u() -> Uuid {
+        Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()
     }
 
     #[test]
-    fn slash_is_root() {
-        let p = Path::parse("/").unwrap();
-        assert!(p.is_root());
-        assert!(p.iter().next().is_none());
+    fn new_requires_one_segment() {
+        let p = Path::new(u(), "field").unwrap();
+        assert_eq!(p.entity(), u());
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["field"]);
     }
 
     #[test]
-    fn iterates_segments() {
-        let p = Path::parse("/s1/s2").unwrap();
-        let segs: Vec<&str> = p.iter().collect();
-        assert_eq!(segs, vec!["s1", "s2"]);
+    fn new_rejects_empty_segment() {
+        let err = Path::new(u(), "").unwrap_err();
+        assert!(matches!(err, PathError::Local(LocalError::EmptySegment)));
     }
 
     #[test]
-    fn missing_leading_slash_rejected() {
-        assert_eq!(Path::parse("s1/s2"), Err(PathError::MissingLeadingSlash));
+    fn new_rejects_segment_with_slash() {
+        let err = Path::new(u(), "a/b").unwrap_err();
+        assert!(matches!(
+            err,
+            PathError::Local(LocalError::SegmentContainsSlash)
+        ));
     }
 
     #[test]
-    fn trailing_slash_rejected() {
-        assert_eq!(Path::parse("/s1/"), Err(PathError::TrailingSlash));
+    fn from_parts_rejects_root() {
+        let err = Path::from_parts(u(), LocalPath::new()).unwrap_err();
+        assert_eq!(err, PathError::MissingSegments);
     }
 
     #[test]
-    fn double_slash_rejected() {
-        assert_eq!(Path::parse("//s1"), Err(PathError::EmptySegment));
-        assert_eq!(Path::parse("/a//b"), Err(PathError::EmptySegment));
+    fn parse_single_segment() {
+        let s = format!("{}/field", u());
+        let p = Path::parse(&s).unwrap();
+        assert_eq!(p.entity(), u());
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["field"]);
+    }
+
+    #[test]
+    fn parse_nested_segments() {
+        let s = format!("{}/a/b/c", u());
+        let p = Path::parse(&s).unwrap();
+        assert_eq!(p.entity(), u());
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn parse_missing_segments_no_slash() {
+        assert_eq!(
+            Path::parse(&u().to_string()),
+            Err(PathError::MissingSegments)
+        );
+    }
+
+    #[test]
+    fn parse_missing_segments_trailing_slash_only() {
+        let s = format!("{}/", u());
+        assert_eq!(Path::parse(&s), Err(PathError::MissingSegments));
+    }
+
+    #[test]
+    fn parse_invalid_uuid() {
+        assert_eq!(Path::parse("not-a-uuid/field"), Err(PathError::InvalidUuid));
+    }
+
+    #[test]
+    fn parse_double_slash_rejected() {
+        let s = format!("{}/a//b", u());
+        assert!(matches!(
+            Path::parse(&s),
+            Err(PathError::Local(LocalError::EmptySegment))
+        ));
+    }
+
+    #[test]
+    fn parse_trailing_slash_rejected() {
+        let s = format!("{}/a/", u());
+        assert!(matches!(
+            Path::parse(&s),
+            Err(PathError::Local(LocalError::TrailingSlash))
+        ));
     }
 
     #[test]
     fn push_appends_segment() {
-        let mut p = Path::new();
-        p.push("s1").unwrap();
-        p.push("s2").unwrap();
-        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["s1", "s2"]);
-        assert_eq!(p.as_str(), "/s1/s2");
+        let mut p = Path::new(u(), "a").unwrap();
+        p.push("b").unwrap();
+        p.push("c").unwrap();
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["a", "b", "c"]);
     }
 
     #[test]
-    fn push_empty_rejected() {
-        let mut p = Path::new();
-        assert_eq!(p.push(""), Err(PathError::EmptySegment));
+    fn display_round_trips() {
+        let s = format!("{}/a/b", u());
+        let p = Path::parse(&s).unwrap();
+        assert_eq!(p.to_string(), s);
     }
 
     #[test]
-    fn push_segment_with_slash_rejected() {
-        let mut p = Path::new();
-        assert_eq!(p.push("a/b"), Err(PathError::SegmentContainsSlash));
-        assert_eq!(p.push("/a"), Err(PathError::SegmentContainsSlash));
-    }
-
-    #[test]
-    fn try_from_str() {
-        let p: Path = "/x/y".try_into().unwrap();
-        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["x", "y"]);
-
-        let err: Result<Path, _> = "x/y".try_into();
-        assert_eq!(err, Err(PathError::MissingLeadingSlash));
-    }
-
-    #[test]
-    fn into_iter_for_reference() {
-        let p = Path::parse("/a/b/c").unwrap();
-        let collected: Vec<_> = (&p).into_iter().collect();
-        assert_eq!(collected, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn display_root_as_slash() {
-        assert_eq!(Path::new().to_string(), "/");
-        assert_eq!(Path::parse("/").unwrap().to_string(), "/");
-        assert_eq!(Path::parse("/s1/s2").unwrap().to_string(), "/s1/s2");
-    }
-
-    #[test]
-    fn equality_is_byte_for_byte() {
-        // No normalisation — there's only one valid representation
-        // of any given path.
-        assert_eq!(Path::parse("/a/b").unwrap(), Path::parse("/a/b").unwrap());
-        assert_ne!(Path::new(), Path::parse("/a").unwrap());
+    fn from_str_works() {
+        let s = format!("{}/x", u());
+        let p: Path = s.parse().unwrap();
+        assert_eq!(p.entity(), u());
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["x"]);
     }
 }
