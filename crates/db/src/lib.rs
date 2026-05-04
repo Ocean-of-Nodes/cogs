@@ -135,7 +135,7 @@ impl Graph {
             .copied()
             .chain(self.edges.keys().copied())
             .chain(self.hyper_edge.keys().copied())
-            // We need here hashset for dedublication nodes and hyperedge/edge
+            // We need here hashset for dedublication attached id and hyperedge/edge id
             .collect::<HashSet<_>>()
             .into_iter()
     }
@@ -145,25 +145,32 @@ impl Graph {
         self.edges.keys().copied()
     }
 
-    /*
-    /// Iterate over all nodes of the whole graph
-    pub fn global_nodes(&self) -> impl Iterator<Item = NodeId> {
-        let edges = self.global_edges().collect::<HashSet<EdgeID>>();
-        let mut iter: Box<dyn Iterator<Item = NodeId>> = Box::new(
-            self.entities
-                .keys()
-                .copied()
-                .filter(move |id| !edges.contains(id)),
-        );
-
-        for subgraph in self.subgraphs.values() {
-            let subgraph_nodes = subgraph.global_nodes();
-            iter = Box::new(iter.chain(subgraph_nodes));
-        }
-
-        iter
+    /// Iterate over all nodes of the whole graph.
+    ///
+    /// A node is an id that has an attached object (key in
+    /// `entities`) and does **not** also live as an edge or
+    /// hyperedge. The exclusion matters because `attach_obj` can
+    /// place an `Object` on an edge or hyperedge — in that case the
+    /// id is in `entities` too, but it is not a node.
+    pub fn iter_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.entities
+            .keys()
+            .copied()
+            .filter(|id| !self.edges.contains_key(id) && !self.hyper_edge.contains_key(id))
     }
 
+    /// Iterate over all hyperedges of whole graph
+    pub fn iter_hyperedge(&self) -> impl Iterator<Item = HyperEdgeId> {
+        self.hyper_edge.keys().copied()
+    }
+
+    pub fn iter_attached(&self) -> impl Iterator<Item = AttachTargetID> {
+        todo!()
+    }
+    // ------------ END ROOTS ------------------- //
+    /*
+    /* ------------ START GETTERS ------------------- */
+    
     /// Get subgraph by path, returns None if subgraph doesn't exist
     pub fn subgraph(&mut self, path: &PathBuf) -> Option<&mut Graph> {
         let mut current_graph = self;
@@ -173,12 +180,10 @@ impl Graph {
         Some(current_graph)
     }
 
-    /// Returns `path` of current graph, path is unique graph id
+    /// Returns `path` of current graph
     pub fn path(&self) -> PathBuf {
         self.path.clone()
     }
-
-    /* ------------ START GETTERS ------------------- */
 
     /// `Sheave` is a bunch of `links` between two `Graph`s.
     ///
@@ -801,19 +806,7 @@ mod tests {
             /// kind of entities iterator yeld
             #[test]
             fn test_iter_entities1() {
-                let (
-                    g,
-                    n1,
-                    n2,
-                    n3,
-                    n4,
-                    e1,
-                    e2,
-                    e3,
-                    e4,
-                    e5,
-                    h,
-                ) = create_semple_graph();
+                let (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h) = create_semple_graph();
 
                 let mut expected = HashSet::new();
                 expected.insert(n1);
@@ -915,19 +908,7 @@ mod tests {
 
             #[test]
             fn iter_edges1() {
-                let (
-                    g,
-                    _n1,
-                    _n2,
-                    _n3,
-                    _n4,
-                    e1,
-                    e2,
-                    e3,
-                    e4,
-                    e5,
-                    _h,
-                ) = create_semple_graph();
+                let (g, _n1, _n2, _n3, _n4, e1, e2, e3, e4, e5, _h) = create_semple_graph();
 
                 let actual: Vec<_> = g.iter_edges().collect();
 
@@ -953,8 +934,72 @@ mod tests {
                 assert_eq!(actual_set, expected);
             }
         }
-    }
 
+        mod test_iter_nodes {
+            use super::*;
+
+            #[test]
+            fn iter_nodes() {
+                let (g, n1, n2, n3, n4, _e1, _e2, _e3, _e4, _e5, _h) = create_semple_graph();
+
+                let actual: Vec<_> = g.iter_nodes().collect();
+
+                // No duplicates — entities is a HashMap, but assert
+                // anyway in case the impl chains in extra sources later.
+                let mut counts: HashMap<NodeId, usize> = HashMap::new();
+                for id in &actual {
+                    *counts.entry(*id).or_insert(0) += 1;
+                }
+                let duplicates: Vec<_> = counts
+                    .iter()
+                    .filter(|(_, c)| **c > 1)
+                    .map(|(e, c)| (*e, *c))
+                    .collect();
+                if !duplicates.is_empty() {
+                    panic!("iter_nodes returned duplicates: {:?}", duplicates);
+                }
+
+                // Exactly the four node ids — edges (e1..e5) and the
+                // hyperedge `h` must NOT appear.
+                let actual_set: HashSet<_> = actual.iter().copied().collect();
+                let expected: HashSet<_> = [n1, n2, n3, n4].into_iter().collect();
+                assert_eq!(actual_set, expected);
+            }
+        }
+
+        mod test_iter_hyperedge {
+            use super::*;
+
+            #[test]
+            fn test_iter_hyperedge() {
+                let (g, _n1, _n2, _n3, _n4, _e1, _e2, _e3, _e4, _e5, h) = create_semple_graph();
+
+                let actual: Vec<_> = g.iter_hyperedge().collect();
+
+                // No duplicates — `hyper_edge` is a HashMap, but
+                // assert anyway in case the impl chains in extra
+                // sources later.
+                let mut counts: HashMap<HyperEdgeId, usize> = HashMap::new();
+                for id in &actual {
+                    *counts.entry(*id).or_insert(0) += 1;
+                }
+                let duplicates: Vec<_> = counts
+                    .iter()
+                    .filter(|(_, c)| **c > 1)
+                    .map(|(e, c)| (*e, *c))
+                    .collect();
+                if !duplicates.is_empty() {
+                    panic!("iter_hyperedge returned duplicates: {:?}", duplicates);
+                }
+
+                // Exactly the one hyperedge — nodes and edges must
+                // NOT appear.
+                let actual_set: HashSet<_> = actual.iter().copied().collect();
+                let expected: HashSet<_> = [h].into_iter().collect();
+                assert_eq!(actual_set, expected);
+            }
+        }
+    }
     mod test_probs {
         use super::*;
 
