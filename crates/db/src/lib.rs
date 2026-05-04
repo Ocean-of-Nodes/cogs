@@ -27,7 +27,7 @@ struct NodeNotFoundError(NodeId);
 struct EdgeNotFoundError(EdgeID);
 #[derive(Debug, PartialEq, Eq)]
 struct MissingEndpointsError {
-    missing_endpoints: Vec<Uuid>,
+    missing_endpoints: Vec<Pointee>,
 }
 
 #[derive(Debug)]
@@ -72,12 +72,12 @@ enum GetEdgeError {
     IncorrectType(IncorrectTypeError),
 }
 
-/// Triplet is a link beetween two entities
-#[derive(Debug, Default, PartialEq, Eq)]
+/// Triplet is a link beetween two pointees
+#[derive(Debug, PartialEq, Eq)]
 struct Triplet {
     id: EdgeID,
-    source: EntityId,
-    target: EntityId,
+    source: Pointee,
+    target: Pointee,
 }
 
 enum EntityType {
@@ -86,6 +86,19 @@ enum EntityType {
     HyperEdge,
     MetaEdge,
     AttachedObject,
+}
+
+/// Classification of a [`Pointee`]. Mirrors [`EntityType`] for the
+/// `Pointee::EntityId` case and adds [`PointeeKind::Subobject`] for
+/// the `Pointee::Path` case.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum PointeeKind {
+    Node,
+    Edge,
+    HyperEdge,
+    MetaEdge,
+    AttachedObject,
+    Subobject,
 }
 
 impl EntityType {
@@ -136,10 +149,10 @@ struct Graph {
     entities: HashMap<EntityId, Object>,
 
     /// Hold graph edges
-    edges: HashMap<EdgeID, (EntityId, EntityId)>,
+    edges: HashMap<EdgeID, (Pointee, Pointee)>,
 
     /// Hold hyperedges
-    hyper_edge: HashMap<HyperEdgeId, Vec<EntityId>>,
+    hyper_edge: HashMap<HyperEdgeId, Vec<Pointee>>,
 }
 
 impl Graph {
@@ -280,28 +293,32 @@ impl Graph {
     ///
     /// Returns [`EntityNotFoundError`] if `id` does not exist
     /// anywhere in this graph or its subgraphs.
-    pub fn neighbours(&self, id: &EntityId) -> Result<Vec<EntityId>, EntityNotFoundError> {
+    pub fn neighbours(&self, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
         if !self.is_exist(id) {
             return Err(EntityNotFoundError(*id));
         }
 
-        let mut neighbours: HashSet<EntityId> = HashSet::new();
+        let mut neighbours: HashSet<Pointee> = HashSet::new();
+        let me = Pointee::EntityId(*id);
 
-        // Edges incident to `id` — insert the other endpoint.
+        // Edges incident to `id` — insert the other endpoint. Match
+        // is on `Pointee::EntityId(*id)` exactly: an edge whose
+        // endpoint is `Pointee::Path { entity: *id, .. }` is *not*
+        // incident to `id` itself, only to that subobject.
         for (source, target) in self.edges.values() {
-            if source == id {
-                neighbours.insert(*target);
-            } else if target == id {
-                neighbours.insert(*source);
+            if source == &me {
+                neighbours.insert(target.clone());
+            } else if target == &me {
+                neighbours.insert(source.clone());
             }
         }
 
         // Hyperedges containing `id` — insert the other members.
         for members in self.hyper_edge.values() {
-            if members.contains(id) {
+            if members.contains(&me) {
                 for m in members {
-                    if m != id {
-                        neighbours.insert(*m);
+                    if m != &me {
+                        neighbours.insert(m.clone());
                     }
                 }
             }
@@ -310,19 +327,25 @@ impl Graph {
         Ok(neighbours.into_iter().collect())
     }
 
-    /// Get all edges incident to `id` — every edge that has `id`
-    /// as its `source` or `target`. Hyperedges are not included
-    /// here; iterate [`Graph::iter_hyperedge`] separately if needed.
+    /// Get all edges incident to `id` — every edge that has
+    /// `Pointee::EntityId(id)` as its `source` or `target`.
+    /// Hyperedges are not included here; iterate
+    /// [`Graph::iter_hyperedge`] separately if needed.
+    ///
+    /// Note: edges whose endpoint is a subobject of `id` (i.e.
+    /// `Pointee::Path { entity: id, .. }`) are **not** returned —
+    /// the matching is on `Pointee::EntityId(id)` exactly.
     pub fn edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
         if !self.is_exist(id) {
             return Err(EntityNotFoundError(*id));
         }
 
+        let me = Pointee::EntityId(*id);
         let edges = self
             .edges
             .iter()
             .filter_map(|(edge_id, (source, target))| {
-                (source == id || target == id).then_some(*edge_id)
+                (source == &me || target == &me).then_some(*edge_id)
             })
             .collect();
         Ok(edges)
@@ -364,8 +387,8 @@ impl Graph {
         if let Some(pair) = self.edges.get(id) {
             return Ok(Triplet {
                 id: *id,
-                source: pair.0,
-                target: pair.1,
+                source: pair.0.clone(),
+                target: pair.1.clone(),
             });
         }
 
@@ -414,8 +437,14 @@ impl Graph {
 
         if in_edges {
             let (source, target) = self.edges.get(&entity).expect("checked above");
-            let is_meta_endpoint =
-                |e: &EntityId| self.edges.contains_key(e) || self.hyper_edge.contains_key(e);
+            // A subobject endpoint never makes the edge a metaedge:
+            // it isn't an edge or a hyperedge by definition.
+            let is_meta_endpoint = |e: &Pointee| match e {
+                Pointee::EntityId(id) => {
+                    self.edges.contains_key(id) || self.hyper_edge.contains_key(id)
+                }
+                Pointee::Path(_) => false,
+            };
             if is_meta_endpoint(source) || is_meta_endpoint(target) {
                 return Some(EntityType::MetaEdge);
             }
@@ -428,6 +457,27 @@ impl Graph {
 
         // Only in `entities` and not collided with any structural map.
         Some(EntityType::Node)
+    }
+
+    /// Classify a [`Pointee`]. Returns `None` if the pointee doesn't
+    /// resolve to anything in the graph.
+    ///
+    /// - `Pointee::EntityId` — delegates to [`Graph::get_type`] and
+    ///   maps each [`EntityType`] to the matching [`PointeeKind`].
+    /// - `Pointee::Path` — yields [`PointeeKind::Subobject`] when the
+    ///   path resolves (see [`Graph::is_pointee_exist`]).
+    pub fn classify_pointee(&self, p: &Pointee) -> Option<PointeeKind> {
+        match p {
+            Pointee::EntityId(id) => self.get_type(*id).map(|t| match t {
+                EntityType::Node => PointeeKind::Node,
+                EntityType::Edge => PointeeKind::Edge,
+                EntityType::HyperEdge => PointeeKind::HyperEdge,
+                EntityType::MetaEdge => PointeeKind::MetaEdge,
+                EntityType::AttachedObject => PointeeKind::AttachedObject,
+            }),
+            Pointee::Path(_) if self.is_pointee_exist(p) => Some(PointeeKind::Subobject),
+            Pointee::Path(_) => None,
+        }
     }
 
     /*
@@ -447,6 +497,42 @@ impl Graph {
     /// returns true if node or edge exists, false otherwise
     pub fn is_exist(&self, id: &EntityId) -> bool {
         self.iter_entities().any(|e| &e == id)
+    }
+
+    /// Check whether `p` resolves to something existing in the graph.
+    ///
+    /// - [`Pointee::EntityId`] — same as [`Graph::is_exist`].
+    /// - [`Pointee::Path`] — the entity must exist *and* the local
+    ///   field-chain must navigate cleanly through nested
+    ///   [`Field::Object`]s and resolve a real field at the end.
+    ///   Navigation fails (and the pointee is reported as missing)
+    ///   if any intermediate segment hits a non-`Object` field.
+    pub fn is_pointee_exist(&self, p: &Pointee) -> bool {
+        match p {
+            Pointee::EntityId(id) => self.is_exist(id),
+            Pointee::Path(path) => self
+                .entities
+                .get(&path.entity())
+                .and_then(|obj| Self::navigate_object(obj, path.local()))
+                .is_some(),
+        }
+    }
+
+    /// Walk `local` through `obj`, descending into nested objects
+    /// segment by segment. Returns the field reached by the last
+    /// segment, or `None` if any segment is missing or attempts to
+    /// traverse a non-object field.
+    fn navigate_object<'a>(obj: &'a Object, local: &LocalPath) -> Option<&'a Field> {
+        let mut iter = local.iter();
+        let first = iter.next()?;
+        let mut current = obj.get(first)?;
+        for seg in iter {
+            match current {
+                Field::Object(inner) => current = inner.get(seg)?,
+                _ => return None,
+            }
+        }
+        Some(current)
     }
     /*
     /// Check that `source` and `target` exist.
@@ -620,7 +706,7 @@ impl Graph {
         Ok(())
     }
     */
-    fn create_hyperedge(&mut self, members: Vec<EntityId>) -> HyperEdgeId {
+    fn create_hyperedge(&mut self, members: Vec<Pointee>) -> HyperEdgeId {
         let id = Uuid::new_v4();
         self.hyper_edge.insert(id, members);
         id
@@ -648,11 +734,11 @@ impl Graph {
     fn __add_edge_with_id(
         &mut self,
         id: Uuid,
-        source: EntityId,
-        target: EntityId,
+        source: Pointee,
+        target: Pointee,
     ) -> Result<(), AddEdgeError> {
-        let source_exists = self.is_exist(&source);
-        let target_exists = self.is_exist(&target);
+        let source_exists = self.is_pointee_exist(&source);
+        let target_exists = self.is_pointee_exist(&target);
         if !source_exists || !target_exists {
             let mut missing_targets = Vec::new();
             if !source_exists {
@@ -674,9 +760,13 @@ impl Graph {
         Ok(())
     }
 
-    pub fn add_edge(&mut self, source: EntityId, target: EntityId) -> Result<EdgeID, AddEdgeError> {
+    pub fn add_edge(
+        &mut self,
+        source: impl Into<Pointee>,
+        target: impl Into<Pointee>,
+    ) -> Result<EdgeID, AddEdgeError> {
         let edge_id = Uuid::new_v4();
-        self.__add_edge_with_id(edge_id, source, target)
+        self.__add_edge_with_id(edge_id, source.into(), target.into())
             .map(|_| edge_id)?;
         Ok(edge_id)
     }
@@ -857,7 +947,7 @@ mod tests {
             let e3 = g.add_edge(e1, e2).unwrap();
             let e4 = g.add_edge(e3, n2).unwrap();
 
-            let h = g.create_hyperedge(vec![n1, n3]);
+            let h = g.create_hyperedge(vec![n1.into(), n3.into()]);
             let e5 = g.add_edge(h, e4).unwrap();
 
             (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h)
@@ -901,7 +991,7 @@ mod tests {
             let e_b = graph.add_edge(n3, n4).unwrap();
             let meta_edge = graph.add_edge(n1, e_b).unwrap();
 
-            let h = graph.create_hyperedge(vec![n3, n4]);
+            let h = graph.create_hyperedge(vec![n3.into(), n4.into()]);
             let edge_to_h = graph.add_edge(n1, h).unwrap();
 
             (graph, n1, n2, n3, n4, e_a, e_b, meta_edge, edge_to_h, h)
@@ -984,7 +1074,7 @@ mod tests {
                 let e1 = g.add_edge(n1, n2).unwrap();
                 g.attach_obj(e1, obj.clone()).unwrap();
 
-                let h = g.create_hyperedge(vec![n1, n2]);
+                let h = g.create_hyperedge(vec![n1.into(), n2.into()]);
                 g.attach_obj(h, obj.clone()).unwrap();
 
                 let actual: Vec<_> = g.iter_entities().collect();
@@ -1147,8 +1237,8 @@ mod tests {
 
                 let neighbours = graph.neighbours(&node_id1).unwrap();
                 assert_eq!(neighbours.len(), 2);
-                assert!(neighbours.contains(&node_id2));
-                assert!(neighbours.contains(&node_id3));
+                assert!(neighbours.contains(&Pointee::EntityId(node_id2)));
+                assert!(neighbours.contains(&Pointee::EntityId(node_id3)));
             }
 
             /// A more complex case with edge beetween edges
@@ -1187,7 +1277,7 @@ mod tests {
 
                 let neighbours = graph.neighbours(&edge3).unwrap();
                 assert_eq!(neighbours.len(), 1);
-                assert!(neighbours.contains(&node_id5));
+                assert!(neighbours.contains(&Pointee::EntityId(node_id5)));
             }
 
             /// Test node connected to node\edge\hyperedge
@@ -1196,12 +1286,18 @@ mod tests {
                 let (graph, n1, n2, _, _, e_a, e_b, _, _, h) = test_utils::create_semple_graph2();
                 let neighbours: HashSet<_> = graph.neighbours(&n1).unwrap().into_iter().collect();
 
-                let expected: HashSet<_> = [n2, e_b, h].into_iter().collect();
+                let expected: HashSet<_> = [
+                    Pointee::EntityId(n2),
+                    Pointee::EntityId(e_b),
+                    Pointee::EntityId(h),
+                ]
+                .into_iter()
+                .collect();
                 assert_eq!(neighbours, expected);
 
                 // Sanity: the bridging edge `e_a` itself is a path,
                 // not a destination, so it must not appear.
-                assert!(!neighbours.contains(&e_a));
+                assert!(!neighbours.contains(&Pointee::EntityId(e_a)));
             }
 
             /// `id` must not appear in its own neighbours list when
@@ -1221,15 +1317,15 @@ mod tests {
                 let n1 = graph.add_node(obj.clone());
                 let n2 = graph.add_node(obj.clone());
 
-                let _h = graph.create_hyperedge(vec![n1, n2]);
+                let _h = graph.create_hyperedge(vec![n1.into(), n2.into()]);
 
                 let neighbours: HashSet<_> = graph.neighbours(&n1).unwrap().into_iter().collect();
 
                 assert!(
-                    !neighbours.contains(&n1),
+                    !neighbours.contains(&Pointee::EntityId(n1)),
                     "n1 must not be listed as its own neighbour"
                 );
-                let expected: HashSet<_> = [n2].into_iter().collect();
+                let expected: HashSet<_> = [Pointee::EntityId(n2)].into_iter().collect();
                 assert_eq!(neighbours, expected);
             }
         }
@@ -1383,8 +1479,8 @@ mod tests {
                     g.get_edge(&e1).unwrap(),
                     Triplet {
                         id: e1,
-                        source: n1,
-                        target: n2,
+                        source: Pointee::EntityId(n1),
+                        target: Pointee::EntityId(n2),
                     }
                 )
             }
@@ -1401,8 +1497,8 @@ mod tests {
                     g.get_edge(&e1).unwrap(),
                     Triplet {
                         id: e1,
-                        source: n1,
-                        target: n1,
+                        source: Pointee::EntityId(n1),
+                        target: Pointee::EntityId(n1),
                     }
                 )
             }
@@ -1418,7 +1514,7 @@ mod tests {
                 assert_eq!(
                     err,
                     AddEdgeError::MissingEndpointsError(MissingEndpointsError {
-                        missing_endpoints: vec![n1, n2],
+                        missing_endpoints: vec![Pointee::EntityId(n1), Pointee::EntityId(n2)],
                     })
                 )
             }
@@ -1432,7 +1528,7 @@ mod tests {
                 let n2 = g.add_node(obj);
 
                 let e1 = g.add_edge(n1, n2).unwrap();
-                let err = g.__add_edge_with_id(e1, n1, n2).unwrap_err();
+                let err = g.__add_edge_with_id(e1, n1.into(), n2.into()).unwrap_err();
                 assert_eq!(err, AddEdgeError::EdgeAlreadyExists(e1))
             }
         }

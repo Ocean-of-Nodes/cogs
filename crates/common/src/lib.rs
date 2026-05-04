@@ -89,8 +89,8 @@ pub enum ObjectDelta {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RetrargetEdge {
-    Source(EntityId),
-    Target(EntityId),
+    Source(Pointee),
+    Target(Pointee),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,8 +113,8 @@ pub enum Patch {
     // --------------- START EDGE DELTA ----------
     AddEdge {
         id: EdgeID,
-        source: EntityId,
-        target: EntityId,
+        source: Pointee,
+        target: Pointee,
     },
     RemoveEdge {
         id: EdgeID,
