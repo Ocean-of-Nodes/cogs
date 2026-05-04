@@ -129,18 +129,18 @@ pub enum Patch {
     // ------------- START HYPER EDGE --------------
     CreateHyperEdge {
         id: HyperEdgeId,
-        entities: Vec<EntityId>,
+        members: Vec<Pointee>,
     },
     RemoveHyperEdge {
         id: HyperEdgeId,
     },
     AddElementsToHyperEdge {
         id: HyperEdgeId,
-        entities: Vec<EntityId>,
+        members: Vec<Pointee>,
     },
     RemoveElementsFromHyperEdge {
         id: HyperEdgeId,
-        entities: Vec<EntityId>,
+        members: Vec<Pointee>,
     },
     MergeHyperEdge {
         lhs: HyperEdgeId,
