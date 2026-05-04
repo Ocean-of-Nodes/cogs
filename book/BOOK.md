@@ -14,7 +14,7 @@ A node can be *free* — having no incoming or outgoing edges and not being a me
 
 ## Edges
 
-An edge is a directed link between any two entities — nodes, edges, or hyperedges — so any combination of endpoints is allowed, including self-loops.
+An edge is a directed link between any two entities — nodes, suboject, edges, or hyperedges — so any combination of endpoints is allowed, including self-loops.
 
 An edge whose at least one endpoint is itself an edge or hyperedge is called a *metaedge*. Metaedge is a classification, not a separate storage type: every metaedge is just an edge.
 
