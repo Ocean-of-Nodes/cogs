@@ -16,11 +16,18 @@ pub type TrackerId = Uuid;
 /// Entity is a common type for nodes/edges/metaedge/hyperedge
 pub type EntityId = Uuid;
 
-/// Endpoint type
-#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
-pub enum PointeeTargetId {
+/// What an edge endpoint or a `Field::Link` can point at — either
+/// a whole entity (by id) or a sub-object inside an entity (by path).
+#[derive(PartialEq, Eq, Debug, Clone, Hash, Serialize, Deserialize)]
+pub enum Pointee {
     EntityId(EntityId),
     Path(Path),
+}
+
+impl From<EntityId> for Pointee {
+    fn from(id: EntityId) -> Self {
+        Pointee::EntityId(id)
+    }
 }
 
 /// Target edges/metaedge/hyperedge for thats object 
@@ -49,7 +56,7 @@ pub enum Field {
     String(String),
     Bool(bool),
     Number(i128),
-    Link(PointeeTargetId),
+    Link(Pointee),
     Null,
     // ------- END FUNDAMENTAL TYPES --------------
 }
