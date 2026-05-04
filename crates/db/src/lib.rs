@@ -310,35 +310,25 @@ impl Graph {
         Ok(neighbours.into_iter().collect())
     }
 
-    /*
-    /// Get all edges link with entity with id
+    /// Get all edges incident to `id` — every edge that has `id`
+    /// as its `source` or `target`. Hyperedges are not included
+    /// here; iterate [`Graph::iter_hyperedge`] separately if needed.
     pub fn edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
         if !self.is_exist(id) {
             return Err(EntityNotFoundError(*id));
         }
 
-        let mut edges = Vec::new();
-        for triplet in self.edges.iter() {
-            if &triplet.source == id || &triplet.target == id {
-                edges.push(triplet.id);
-            }
-        }
-
-        for triplet in self.beetween_edges.iter() {
-            if &triplet.source == id || &triplet.target == id {
-                edges.push(triplet.id);
-            }
-        }
-
-        for graph in self.subgraphs.values() {
-            if let Ok(subgraph_edges) = graph.edges(id) {
-                edges.extend(subgraph_edges);
-            }
-        }
-
+        let edges = self
+            .edges
+            .iter()
+            .filter_map(|(edge_id, (source, target))| {
+                (source == id || target == id).then_some(*edge_id)
+            })
+            .collect();
         Ok(edges)
     }
 
+    /*
     pub fn out_nodes() {
         unimplemented!()
     }
@@ -818,7 +808,7 @@ mod tests {
 
     mod test_utils {
         use super::*;
-        
+
         pub fn create_simple_obj(field_name: &str) -> Object {
             let mut obj = Object::new();
             obj.insert(field_name.into(), Field::Null);
@@ -838,7 +828,7 @@ mod tests {
         //    |                     |
         //    |----------------------
         // ````
-        pub fn create_semple_graph() -> (
+        pub fn create_semple_graph1() -> (
             Graph,
             NodeId,
             NodeId,
@@ -868,6 +858,50 @@ mod tests {
 
             (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h)
         }
+
+        // Built graph:
+        // ```text
+        //  n1 ---- e_a ----- n2
+        //  |\
+        //  |  ----------------
+        //  |                 |
+        //  edge_to_h     meta_edge
+        //  |                 |
+        //  -------           |     --------
+        //  |  n3-|----------e_b----|---n4 |
+        //  |     |-----------------|      |
+        //  |                              |
+        //  |-----------h------------------|
+        // ```
+        pub fn create_semple_graph2() -> (
+            Graph,
+            NodeId,
+            NodeId,
+            NodeId,
+            NodeId,
+            EdgeID,
+            EdgeID,
+            EdgeID,
+            EdgeID,
+            HyperEdgeId,
+        ) {
+            let mut graph = Graph::default();
+            let obj = test_utils::create_simple_obj("test_field");
+
+            let n1 = graph.add_node(obj.clone());
+            let n2 = graph.add_node(obj.clone());
+            let n3 = graph.add_node(obj.clone());
+            let n4 = graph.add_node(obj.clone());
+
+            let e_a = graph.add_edge(n1, n2).unwrap();
+            let e_b = graph.add_edge(n3, n4).unwrap();
+            let meta_edge = graph.add_edge(n1, e_b).unwrap();
+
+            let h = graph.create_hyperedge(vec![n3, n4]);
+            let edge_to_h = graph.add_edge(n1, h).unwrap();
+
+            (graph, n1, n2, n3, n4, e_a, e_b, meta_edge, edge_to_h, h)
+        }
     }
 
     mod test_globals {
@@ -880,7 +914,7 @@ mod tests {
             /// kind of entities iterator yeld
             #[test]
             fn test_iter_entities1() {
-                let (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h) = test_utils::create_semple_graph();
+                let (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h) = test_utils::create_semple_graph1();
 
                 let mut expected = HashSet::new();
                 expected.insert(n1);
@@ -982,7 +1016,8 @@ mod tests {
 
             #[test]
             fn iter_edges1() {
-                let (g, _n1, _n2, _n3, _n4, e1, e2, e3, e4, e5, _h) = test_utils::create_semple_graph();
+                let (g, _n1, _n2, _n3, _n4, e1, e2, e3, e4, e5, _h) =
+                    test_utils::create_semple_graph1();
 
                 let actual: Vec<_> = g.iter_edges().collect();
 
@@ -1014,7 +1049,8 @@ mod tests {
 
             #[test]
             fn iter_nodes() {
-                let (g, n1, n2, n3, n4, _e1, _e2, _e3, _e4, _e5, _h) = test_utils::create_semple_graph();
+                let (g, n1, n2, n3, n4, _e1, _e2, _e3, _e4, _e5, _h) =
+                    test_utils::create_semple_graph1();
 
                 let actual: Vec<_> = g.iter_nodes().collect();
 
@@ -1046,7 +1082,8 @@ mod tests {
 
             #[test]
             fn test_iter_hyperedge() {
-                let (g, _n1, _n2, _n3, _n4, _e1, _e2, _e3, _e4, _e5, h) = test_utils::create_semple_graph();
+                let (g, _n1, _n2, _n3, _n4, _e1, _e2, _e3, _e4, _e5, h) =
+                    test_utils::create_semple_graph1();
 
                 let actual: Vec<_> = g.iter_hyperedge().collect();
 
@@ -1110,7 +1147,6 @@ mod tests {
                 assert!(neighbours.contains(&node_id3));
             }
 
-            
             /// A more complex case with edge beetween edges
             /// Test that get_neighbours will return only nodes,
             /// but not edges, even if edge is beetween two edges
@@ -1153,40 +1189,8 @@ mod tests {
             /// Test node connected to node\edge\hyperedge
             #[test]
             fn test_neighbours3() {
-                // Built graph:
-                // ```text
-                //  n1 ---- e_a ----- n2
-                //  |\
-                //  |  ----------------
-                //  |                 |
-                //  _edge_to_h    _meta_edge
-                //  |                 |
-                //  -------           |     --------
-                //  |  n3-|----------e_b----|---n4 |
-                //  |     |-----------------|      |
-                //  |                              |
-                //  |-----------h------------------| 
-                // ```
-                //
-                // Expected: neighbours(n1) = {n2, e_b, h} — one of
-                // each kind: a node, an edge, a hyperedge.
-                let mut graph = Graph::default();
-                let obj = test_utils::create_simple_obj("test_field");
-
-                let n1 = graph.add_node(obj.clone());
-                let n2 = graph.add_node(obj.clone());
-                let n3 = graph.add_node(obj.clone());
-                let n4 = graph.add_node(obj.clone());
-
-                let e_a = graph.add_edge(n1, n2).unwrap();
-                let e_b = graph.add_edge(n3, n4).unwrap();
-                let _meta_edge = graph.add_edge(n1, e_b).unwrap();
-
-                let h = graph.create_hyperedge(vec![n3, n4]);
-                let _edge_to_h = graph.add_edge(n1, h).unwrap();
-
-                let neighbours: HashSet<_> =
-                    graph.neighbours(&n1).unwrap().into_iter().collect();
+                let (graph, n1, n2, _, _, e_a, e_b, _, _, h) = test_utils::create_semple_graph2();
+                let neighbours: HashSet<_> = graph.neighbours(&n1).unwrap().into_iter().collect();
 
                 let expected: HashSet<_> = [n2, e_b, h].into_iter().collect();
                 assert_eq!(neighbours, expected);
@@ -1215,8 +1219,7 @@ mod tests {
 
                 let _h = graph.create_hyperedge(vec![n1, n2]);
 
-                let neighbours: HashSet<_> =
-                    graph.neighbours(&n1).unwrap().into_iter().collect();
+                let neighbours: HashSet<_> = graph.neighbours(&n1).unwrap().into_iter().collect();
 
                 assert!(
                     !neighbours.contains(&n1),
@@ -1224,6 +1227,25 @@ mod tests {
                 );
                 let expected: HashSet<_> = [n2].into_iter().collect();
                 assert_eq!(neighbours, expected);
+            }
+        }
+
+        mod test_edges {
+            use super::*;
+
+            /// Test all kind of edges
+            #[test]
+            fn test_get_edges_1() {
+                let (graph, n1, _n2, _n3, _n4, e_a, _e_b, meta_edge, edge_to_h, _h) =
+                    test_utils::create_semple_graph2();
+
+                // n1 is endpoint of three edges:
+                //   e_a       (n1 ↔ n2)        — edge to a node
+                //   meta_edge (n1 ↔ e_b)       — edge to an edge
+                //   edge_to_h (n1 ↔ h)         — edge to a hyperedge
+                let edges: HashSet<_> = graph.edges(&n1).unwrap().into_iter().collect();
+                let expected: HashSet<_> = [e_a, meta_edge, edge_to_h].into_iter().collect();
+                assert_eq!(edges, expected);
             }
         }
     }
@@ -1357,35 +1379,6 @@ mod tests {
     /*
     mod test_constructors_and_getters {
         use super::*;
-
-        /// A simple case
-        #[test]
-        fn test_get_edges_1() {
-            // Built graph:
-            // ```text
-            //  node1 --(edge)--> node2
-            //   ^
-            //   |
-            // (edge2)
-            //   |
-            //  node3
-            // ````
-            let mut graph = Graph::default();
-
-            let field1 = Field::String("node1".to_string());
-            let field2 = Field::String("node2".to_string());
-            let field3 = Field::String("node3".to_string());
-            let node_id1 = graph.add_node(field1).unwrap();
-            let node_id2 = graph.add_node(field2).unwrap();
-            let node_id3 = graph.add_node(field3).unwrap();
-            let edge1 = graph.add_edge(node_id1, node_id2).unwrap();
-            let edge2 = graph.add_edge(node_id3, node_id1).unwrap();
-
-            let edges = graph.edges(&node_id1);
-            assert_eq!(edges.len(), 2);
-            assert!(edges.contains(&edge1));
-            assert!(edges.contains(&edge2));
-        }
 
         // TODO: test_get_edges in different subgraphs
 
