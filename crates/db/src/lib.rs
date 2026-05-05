@@ -555,17 +555,75 @@ impl Graph {
 
         result
     }
-
-    /*
-    pub fn out_nodes() {
-        unimplemented!()
+    
+    /// Endpoints reachable through outgoing edges from `id` — for
+    /// every edge with `source == id`, the `target`.
+    ///
+    /// The directional split of [`Graph::neighbours`]. Hyperedges are
+    /// undirected and are **not** included here; use
+    /// [`Graph::neighbours`] for the kind-agnostic, direction-agnostic
+    /// view.
+    pub fn out_neighbours(&self, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
+        if !self.is_exist(id) {
+            return Err(EntityNotFoundError(*id));
+        }
+        let me = Pointee::EntityId(*id);
+        let mut out: HashSet<Pointee> = HashSet::new();
+        for (s, t) in self.edges.values() {
+            if s == &me {
+                out.insert(t.clone());
+            }
+        }
+        Ok(out.into_iter().collect())
     }
 
-    pub fn in_nodes() {
-        unimplemented!()
+    /// Endpoints from which incoming edges arrive at `id` — for
+    /// every edge with `target == id`, the `source`.
+    ///
+    /// The directional split of [`Graph::neighbours`]. Hyperedges are
+    /// undirected and are **not** included here.
+    pub fn in_neighbours(&self, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
+        if !self.is_exist(id) {
+            return Err(EntityNotFoundError(*id));
+        }
+        let me = Pointee::EntityId(*id);
+        let mut inc: HashSet<Pointee> = HashSet::new();
+        for (s, t) in self.edges.values() {
+            if t == &me {
+                inc.insert(s.clone());
+            }
+        }
+        Ok(inc.into_iter().collect())
     }
 
-    */
+    /// Edges going *out* of `id` — those with `source == id`. The
+    /// directional split of [`Graph::edges`].
+    pub fn out_edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
+        if !self.is_exist(id) {
+            return Err(EntityNotFoundError(*id));
+        }
+        let me = Pointee::EntityId(*id);
+        Ok(self
+            .edges
+            .iter()
+            .filter_map(|(eid, (s, _))| (s == &me).then_some(*eid))
+            .collect())
+    }
+
+    /// Edges coming *in* to `id` — those with `target == id`. The
+    /// directional split of [`Graph::edges`].
+    pub fn in_edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
+        if !self.is_exist(id) {
+            return Err(EntityNotFoundError(*id));
+        }
+        let me = Pointee::EntityId(*id);
+        Ok(self
+            .edges
+            .iter()
+            .filter_map(|(eid, (_, t))| (t == &me).then_some(*eid))
+            .collect())
+    }
+
 
     /// Get a triplet by id.
     ///
@@ -1648,6 +1706,100 @@ mod tests {
 
                 assert_eq!(result_nodes, [n1, n2].into_iter().collect());
                 assert_eq!(result_edges, [e1].into_iter().collect());
+            }
+        }
+
+        // The next four tests use `create_semple_graph3` and exercise
+        // the directional split of `neighbours` / `edges`. The reversed
+        // `e2 = (n3 → n1)` is what makes them informative.
+
+        mod test_out_edges {
+            use super::*;
+
+            #[test]
+            fn out_edges() {
+                let (graph, n1, n2, n3, e1, e2, e3, e4) =
+                    test_utils::create_semple_graph3();
+
+                let from_n1: HashSet<_> = graph.out_edges(&n1).unwrap().into_iter().collect();
+                let from_n2: HashSet<_> = graph.out_edges(&n2).unwrap().into_iter().collect();
+                let from_n3: HashSet<_> = graph.out_edges(&n3).unwrap().into_iter().collect();
+
+                assert_eq!(from_n1, [e1].into_iter().collect());
+                assert_eq!(from_n2, HashSet::new());
+                assert_eq!(from_n3, [e2, e3, e4].into_iter().collect());
+            }
+        }
+
+        mod test_in_edges {
+            use super::*;
+
+            #[test]
+            fn in_edges() {
+                let (graph, n1, n2, n3, e1, e2, e3, e4) =
+                    test_utils::create_semple_graph3();
+
+                let into_n1: HashSet<_> = graph.in_edges(&n1).unwrap().into_iter().collect();
+                let into_n2: HashSet<_> = graph.in_edges(&n2).unwrap().into_iter().collect();
+                let into_n3: HashSet<_> = graph.in_edges(&n3).unwrap().into_iter().collect();
+
+                assert_eq!(into_n1, [e2].into_iter().collect());
+                assert_eq!(into_n2, [e1, e3, e4].into_iter().collect());
+                assert_eq!(into_n3, HashSet::new());
+            }
+        }
+
+        mod test_out_neighbours {
+            use super::*;
+
+            #[test]
+            fn out_neighbours() {
+                let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) =
+                    test_utils::create_semple_graph3();
+
+                let from_n1: HashSet<_> =
+                    graph.out_neighbours(&n1).unwrap().into_iter().collect();
+                let from_n2: HashSet<_> =
+                    graph.out_neighbours(&n2).unwrap().into_iter().collect();
+                let from_n3: HashSet<_> =
+                    graph.out_neighbours(&n3).unwrap().into_iter().collect();
+
+                // n1 → n2 only.
+                assert_eq!(from_n1, [Pointee::from(n2)].into_iter().collect());
+                // n2 has no outgoing.
+                assert_eq!(from_n2, HashSet::new());
+                // n3 → n1 (via e2), n3 → n2 (via e3 and e4 — dedupes).
+                assert_eq!(
+                    from_n3,
+                    [Pointee::from(n1), Pointee::from(n2)].into_iter().collect()
+                );
+            }
+        }
+
+        mod test_in_neighbours {
+            use super::*;
+
+            #[test]
+            fn in_neighbours() {
+                let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) =
+                    test_utils::create_semple_graph3();
+
+                let into_n1: HashSet<_> =
+                    graph.in_neighbours(&n1).unwrap().into_iter().collect();
+                let into_n2: HashSet<_> =
+                    graph.in_neighbours(&n2).unwrap().into_iter().collect();
+                let into_n3: HashSet<_> =
+                    graph.in_neighbours(&n3).unwrap().into_iter().collect();
+
+                // n3 → n1.
+                assert_eq!(into_n1, [Pointee::from(n3)].into_iter().collect());
+                // n1 → n2 (via e1), n3 → n2 (via e3 and e4 — dedupes).
+                assert_eq!(
+                    into_n2,
+                    [Pointee::from(n1), Pointee::from(n3)].into_iter().collect()
+                );
+                // n3 has no incoming.
+                assert_eq!(into_n3, HashSet::new());
             }
         }
     }
