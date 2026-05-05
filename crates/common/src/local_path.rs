@@ -1,43 +1,42 @@
 //! Slash-separated path used to address nested objects.
 //! A simpler analogue of [`std::path::PathBuf`]:
 //!
-//! - Both `""` and `"/"` represent the **root**; iterating either
-//!   yields no segments.
+//! - Every path has **at least one** segment — there is no root form.
+//!   The minimal valid path is `/seg`.
 //! - `"/s1/s2"` iterates as `"s1"`, `"s2"`.
-//! - Anything else — missing leading slash, trailing slash, double
-//!   slashes, segments with embedded slashes — is rejected with a
-//!   [`PathError`]. The path is canonical by construction.
+//! - Anything else — empty input, a lone `/`, missing leading slash,
+//!   trailing slash, doubled slashes, segments with embedded slashes
+//!   — is rejected with a [`PathError`]. The path is canonical by
+//!   construction.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// An owned slash-separated path.
+/// An owned slash-separated path with at least one segment.
 ///
-/// The only valid forms are:
-/// - the empty string `""` (the root);
-/// - `/seg₁/seg₂/.../segₙ` where every `segᵢ` is non-empty and
-///   contains no `/`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct LocalPath {
-    /// Always either `""` (root) or `/seg/.../seg` — never `"/"`,
-    /// never doubled slashes, never trailing slash.
+/// The only valid form is `/seg₁[/seg₂.../segₙ]` where every `segᵢ`
+/// is non-empty and contains no `/`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LocalObjPath {
+    /// Always `/seg[/seg...]` — never empty, never `"/"`, never
+    /// doubled slashes, never trailing slash.
     inner: String,
 }
 
-/// Reasons a string can fail to be a valid [`Path`] (or a segment
-/// can fail to be appended).
+/// Reasons a string can fail to be a valid [`LocalObjPath`] (or a
+/// segment can fail to be appended).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathError {
-    /// A segment is empty (e.g. `"//"`, `"/a//b"`, `push("")`).
+    /// A segment is empty (e.g. `"/"`, `"//"`, `"/a//b"`, `push("")`).
     EmptySegment,
-    /// A non-root path doesn't start with `/`.
+    /// The input doesn't start with `/`.
     MissingLeadingSlash,
-    /// A non-root path ends with `/` (e.g. `"/a/"`). The only
-    /// path that may be a single slash is the root, written `"/"`.
+    /// The input ends with `/` (e.g. `"/a/"`).
     TrailingSlash,
     /// A pushed segment contains an internal slash. Use
-    /// [`Path::parse`] if you want to admit a multi-segment string.
+    /// [`LocalObjPath::parse`] if you want to admit a multi-segment
+    /// string.
     SegmentContainsSlash,
 }
 
@@ -54,23 +53,30 @@ impl fmt::Display for PathError {
 
 impl std::error::Error for PathError {}
 
-impl LocalPath {
-    /// Construct a root path.
-    pub const fn new() -> Self {
-        Self {
-            inner: String::new(),
+impl LocalObjPath {
+    /// Construct a path from a single segment. The segment must be
+    /// non-empty and must not contain `/`.
+    pub fn new(first_segment: &str) -> Result<Self, PathError> {
+        if first_segment.is_empty() {
+            return Err(PathError::EmptySegment);
         }
+        if first_segment.contains('/') {
+            return Err(PathError::SegmentContainsSlash);
+        }
+        let mut inner = String::with_capacity(first_segment.len() + 1);
+        inner.push('/');
+        inner.push_str(first_segment);
+        Ok(Self { inner })
     }
 
-    /// Parse a slash-separated string. Accepts `""` and `"/"` as the
-    /// root, and `/s1/s2/.../sn` for any non-zero `n`. Rejects every
-    /// non-canonical form.
+    /// Parse a slash-separated string `/s1[/s2.../sn]` with at least
+    /// one segment. Empty input and a lone `"/"` are both rejected.
     pub fn parse(s: &str) -> Result<Self, PathError> {
-        if s.is_empty() || s == "/" {
-            return Ok(Self::new());
-        }
         if !s.starts_with('/') {
             return Err(PathError::MissingLeadingSlash);
+        }
+        if s == "/" {
+            return Err(PathError::EmptySegment);
         }
         if s.ends_with('/') {
             return Err(PathError::TrailingSlash);
@@ -102,56 +108,42 @@ impl LocalPath {
         Ok(())
     }
 
-    /// `true` if the path has no segments.
-    pub fn is_root(&self) -> bool {
-        self.inner.is_empty()
-    }
-
-    /// Iterate path segments.
+    /// Iterate path segments. Always yields at least one segment.
     pub fn iter(&self) -> Iter<'_> {
+        // `inner` is invariantly `/seg[/seg...]`, so stripping the
+        // leading `/` and splitting on `/` gives the segments.
         Iter {
-            // Skip the leading `/` (if any) so split doesn't yield a
-            // leading empty segment.
-            inner: self
-                .inner
-                .strip_prefix('/')
-                .unwrap_or(&self.inner)
-                .split('/'),
-            done: self.inner.is_empty(),
+            inner: self.inner[1..].split('/'),
         }
     }
 
-    /// Borrow the underlying string. The root form is always `""`.
+    /// Borrow the underlying string. Always begins with `/`.
     pub fn as_str(&self) -> &str {
         &self.inner
     }
 }
 
-impl TryFrom<&str> for LocalPath {
+impl TryFrom<&str> for LocalObjPath {
     type Error = PathError;
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         Self::parse(s)
     }
 }
 
-impl TryFrom<String> for LocalPath {
+impl TryFrom<String> for LocalObjPath {
     type Error = PathError;
     fn try_from(s: String) -> Result<Self, Self::Error> {
         Self::parse(&s)
     }
 }
 
-impl fmt::Display for LocalPath {
+impl fmt::Display for LocalObjPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.inner.is_empty() {
-            f.write_str("/")
-        } else {
-            f.write_str(&self.inner)
-        }
+        f.write_str(&self.inner)
     }
 }
 
-impl<'a> IntoIterator for &'a LocalPath {
+impl<'a> IntoIterator for &'a LocalObjPath {
     type Item = &'a str;
     type IntoIter = Iter<'a>;
     fn into_iter(self) -> Self::IntoIter {
@@ -159,21 +151,15 @@ impl<'a> IntoIterator for &'a LocalPath {
     }
 }
 
-/// Iterator over the segments of a [`Path`].
+/// Iterator over the segments of a [`LocalObjPath`].
 pub struct Iter<'a> {
     inner: std::str::Split<'a, char>,
-    /// `true` when the path was empty — `Split` over `""` would yield
-    /// one empty item, which we don't want.
-    done: bool,
 }
 
 impl<'a> Iterator for Iter<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<&'a str> {
-        if self.done {
-            return None;
-        }
         self.inner.next()
     }
 }
@@ -183,46 +169,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_string_is_root() {
-        let p = LocalPath::parse("").unwrap();
-        assert!(p.is_root());
-        assert!(p.iter().next().is_none());
+    fn empty_string_rejected() {
+        assert_eq!(LocalObjPath::parse(""), Err(PathError::MissingLeadingSlash));
     }
 
     #[test]
-    fn slash_is_root() {
-        let p = LocalPath::parse("/").unwrap();
-        assert!(p.is_root());
-        assert!(p.iter().next().is_none());
+    fn lone_slash_rejected() {
+        assert_eq!(LocalObjPath::parse("/"), Err(PathError::EmptySegment));
+    }
+
+    #[test]
+    fn single_segment_accepted() {
+        let p = LocalObjPath::parse("/field1").unwrap();
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["field1"]);
     }
 
     #[test]
     fn iterates_segments() {
-        let p = LocalPath::parse("/s1/s2").unwrap();
+        let p = LocalObjPath::parse("/s1/s2").unwrap();
         let segs: Vec<&str> = p.iter().collect();
         assert_eq!(segs, vec!["s1", "s2"]);
     }
 
     #[test]
     fn missing_leading_slash_rejected() {
-        assert_eq!(LocalPath::parse("s1/s2"), Err(PathError::MissingLeadingSlash));
+        assert_eq!(LocalObjPath::parse("s1/s2"), Err(PathError::MissingLeadingSlash));
     }
 
     #[test]
     fn trailing_slash_rejected() {
-        assert_eq!(LocalPath::parse("/s1/"), Err(PathError::TrailingSlash));
+        assert_eq!(LocalObjPath::parse("/s1/"), Err(PathError::TrailingSlash));
     }
 
     #[test]
     fn double_slash_rejected() {
-        assert_eq!(LocalPath::parse("//s1"), Err(PathError::EmptySegment));
-        assert_eq!(LocalPath::parse("/a//b"), Err(PathError::EmptySegment));
+        assert_eq!(LocalObjPath::parse("//s1"), Err(PathError::EmptySegment));
+        assert_eq!(LocalObjPath::parse("/a//b"), Err(PathError::EmptySegment));
+    }
+
+    #[test]
+    fn new_requires_segment() {
+        let p = LocalObjPath::new("field1").unwrap();
+        assert_eq!(p.as_str(), "/field1");
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["field1"]);
+    }
+
+    #[test]
+    fn new_empty_rejected() {
+        assert_eq!(LocalObjPath::new(""), Err(PathError::EmptySegment));
+    }
+
+    #[test]
+    fn new_segment_with_slash_rejected() {
+        assert_eq!(LocalObjPath::new("a/b"), Err(PathError::SegmentContainsSlash));
+        assert_eq!(LocalObjPath::new("/a"), Err(PathError::SegmentContainsSlash));
     }
 
     #[test]
     fn push_appends_segment() {
-        let mut p = LocalPath::new();
-        p.push("s1").unwrap();
+        let mut p = LocalObjPath::new("s1").unwrap();
         p.push("s2").unwrap();
         assert_eq!(p.iter().collect::<Vec<_>>(), vec!["s1", "s2"]);
         assert_eq!(p.as_str(), "/s1/s2");
@@ -230,45 +235,42 @@ mod tests {
 
     #[test]
     fn push_empty_rejected() {
-        let mut p = LocalPath::new();
+        let mut p = LocalObjPath::new("s1").unwrap();
         assert_eq!(p.push(""), Err(PathError::EmptySegment));
     }
 
     #[test]
     fn push_segment_with_slash_rejected() {
-        let mut p = LocalPath::new();
+        let mut p = LocalObjPath::new("s1").unwrap();
         assert_eq!(p.push("a/b"), Err(PathError::SegmentContainsSlash));
         assert_eq!(p.push("/a"), Err(PathError::SegmentContainsSlash));
     }
 
     #[test]
     fn try_from_str() {
-        let p: LocalPath = "/x/y".try_into().unwrap();
+        let p: LocalObjPath = "/x/y".try_into().unwrap();
         assert_eq!(p.iter().collect::<Vec<_>>(), vec!["x", "y"]);
 
-        let err: Result<LocalPath, _> = "x/y".try_into();
+        let err: Result<LocalObjPath, _> = "x/y".try_into();
         assert_eq!(err, Err(PathError::MissingLeadingSlash));
     }
 
     #[test]
     fn into_iter_for_reference() {
-        let p = LocalPath::parse("/a/b/c").unwrap();
+        let p = LocalObjPath::parse("/a/b/c").unwrap();
         let collected: Vec<_> = (&p).into_iter().collect();
         assert_eq!(collected, vec!["a", "b", "c"]);
     }
 
     #[test]
-    fn display_root_as_slash() {
-        assert_eq!(LocalPath::new().to_string(), "/");
-        assert_eq!(LocalPath::parse("/").unwrap().to_string(), "/");
-        assert_eq!(LocalPath::parse("/s1/s2").unwrap().to_string(), "/s1/s2");
+    fn display_shows_path() {
+        assert_eq!(LocalObjPath::new("s1").unwrap().to_string(), "/s1");
+        assert_eq!(LocalObjPath::parse("/s1/s2").unwrap().to_string(), "/s1/s2");
     }
 
     #[test]
     fn equality_is_byte_for_byte() {
-        // No normalisation — there's only one valid representation
-        // of any given path.
-        assert_eq!(LocalPath::parse("/a/b").unwrap(), LocalPath::parse("/a/b").unwrap());
-        assert_ne!(LocalPath::new(), LocalPath::parse("/a").unwrap());
+        assert_eq!(LocalObjPath::parse("/a/b").unwrap(), LocalObjPath::parse("/a/b").unwrap());
+        assert_ne!(LocalObjPath::new("a").unwrap(), LocalObjPath::parse("/a/b").unwrap());
     }
 }

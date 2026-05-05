@@ -13,14 +13,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::EntityId;
-use crate::local_path::{LocalPath, PathError as LocalError};
+use crate::local_path::{LocalObjPath, PathError as LocalError};
 
 /// An owned `<uuid>/<seg₁>[/<seg₂>...]` path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Path {
+pub struct GlobalObjPath {
     entity: EntityId,
     /// Always non-root.
-    local: LocalPath,
+    local: LocalObjPath,
 }
 
 /// Reasons a string can fail to be a valid [`Path`].
@@ -55,21 +55,16 @@ impl fmt::Display for PathError {
 
 impl std::error::Error for PathError {}
 
-impl Path {
+impl GlobalObjPath {
     /// Build a path from an entity id and at least one field segment.
     pub fn new(entity: EntityId, first_segment: &str) -> Result<Self, PathError> {
-        let mut local = LocalPath::new();
-        local.push(first_segment)?;
+        let local = LocalObjPath::new(first_segment)?;
         Ok(Self { entity, local })
     }
 
-    /// Build a path from an entity id and a non-root [`LocalPath`].
-    /// Returns [`PathError::MissingSegments`] if `local` is the root.
-    pub fn from_parts(entity: EntityId, local: LocalPath) -> Result<Self, PathError> {
-        if local.is_root() {
-            return Err(PathError::MissingSegments);
-        }
-        Ok(Self { entity, local })
+    /// Build a path from an entity id and a [`LocalObjPath`].
+    pub fn from_parts(entity: EntityId, local: LocalObjPath) -> Self {
+        Self { entity, local }
     }
 
     /// Parse a string of the form `<uuid>/<seg₁>[/<seg₂>...]`.
@@ -80,7 +75,7 @@ impl Path {
             return Err(PathError::MissingSegments);
         }
         // LocalPath wants a leading `/` for non-root inputs.
-        let local = LocalPath::parse(&format!("/{tail}"))?;
+        let local = LocalObjPath::parse(&format!("/{tail}"))?;
         Ok(Self { entity, local })
     }
 
@@ -90,7 +85,7 @@ impl Path {
     }
 
     /// The local navigation inside the entity's object.
-    pub fn local(&self) -> &LocalPath {
+    pub fn local(&self) -> &LocalObjPath {
         &self.local
     }
 
@@ -106,28 +101,28 @@ impl Path {
     }
 }
 
-impl TryFrom<&str> for Path {
+impl TryFrom<&str> for GlobalObjPath {
     type Error = PathError;
     fn try_from(s: &str) -> Result<Self, Self::Error> {
         Self::parse(s)
     }
 }
 
-impl TryFrom<String> for Path {
+impl TryFrom<String> for GlobalObjPath {
     type Error = PathError;
     fn try_from(s: String) -> Result<Self, Self::Error> {
         Self::parse(&s)
     }
 }
 
-impl FromStr for Path {
+impl FromStr for GlobalObjPath {
     type Err = PathError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s)
     }
 }
 
-impl fmt::Display for Path {
+impl fmt::Display for GlobalObjPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // LocalPath display is `/seg/seg…` for non-root.
         write!(f, "{}{}", self.entity, self.local)
@@ -144,20 +139,20 @@ mod tests {
 
     #[test]
     fn new_requires_one_segment() {
-        let p = Path::new(u(), "field").unwrap();
+        let p = GlobalObjPath::new(u(), "field").unwrap();
         assert_eq!(p.entity(), u());
         assert_eq!(p.iter().collect::<Vec<_>>(), vec!["field"]);
     }
 
     #[test]
     fn new_rejects_empty_segment() {
-        let err = Path::new(u(), "").unwrap_err();
+        let err = GlobalObjPath::new(u(), "").unwrap_err();
         assert!(matches!(err, PathError::Local(LocalError::EmptySegment)));
     }
 
     #[test]
     fn new_rejects_segment_with_slash() {
-        let err = Path::new(u(), "a/b").unwrap_err();
+        let err = GlobalObjPath::new(u(), "a/b").unwrap_err();
         assert!(matches!(
             err,
             PathError::Local(LocalError::SegmentContainsSlash)
@@ -165,15 +160,17 @@ mod tests {
     }
 
     #[test]
-    fn from_parts_rejects_root() {
-        let err = Path::from_parts(u(), LocalPath::new()).unwrap_err();
-        assert_eq!(err, PathError::MissingSegments);
+    fn from_parts_builds_path() {
+        let local = LocalObjPath::new("field").unwrap();
+        let p = GlobalObjPath::from_parts(u(), local);
+        assert_eq!(p.entity(), u());
+        assert_eq!(p.iter().collect::<Vec<_>>(), vec!["field"]);
     }
 
     #[test]
     fn parse_single_segment() {
         let s = format!("{}/field", u());
-        let p = Path::parse(&s).unwrap();
+        let p = GlobalObjPath::parse(&s).unwrap();
         assert_eq!(p.entity(), u());
         assert_eq!(p.iter().collect::<Vec<_>>(), vec!["field"]);
     }
@@ -181,7 +178,7 @@ mod tests {
     #[test]
     fn parse_nested_segments() {
         let s = format!("{}/a/b/c", u());
-        let p = Path::parse(&s).unwrap();
+        let p = GlobalObjPath::parse(&s).unwrap();
         assert_eq!(p.entity(), u());
         assert_eq!(p.iter().collect::<Vec<_>>(), vec!["a", "b", "c"]);
     }
@@ -189,7 +186,7 @@ mod tests {
     #[test]
     fn parse_missing_segments_no_slash() {
         assert_eq!(
-            Path::parse(&u().to_string()),
+            GlobalObjPath::parse(&u().to_string()),
             Err(PathError::MissingSegments)
         );
     }
@@ -197,19 +194,19 @@ mod tests {
     #[test]
     fn parse_missing_segments_trailing_slash_only() {
         let s = format!("{}/", u());
-        assert_eq!(Path::parse(&s), Err(PathError::MissingSegments));
+        assert_eq!(GlobalObjPath::parse(&s), Err(PathError::MissingSegments));
     }
 
     #[test]
     fn parse_invalid_uuid() {
-        assert_eq!(Path::parse("not-a-uuid/field"), Err(PathError::InvalidUuid));
+        assert_eq!(GlobalObjPath::parse("not-a-uuid/field"), Err(PathError::InvalidUuid));
     }
 
     #[test]
     fn parse_double_slash_rejected() {
         let s = format!("{}/a//b", u());
         assert!(matches!(
-            Path::parse(&s),
+            GlobalObjPath::parse(&s),
             Err(PathError::Local(LocalError::EmptySegment))
         ));
     }
@@ -218,14 +215,14 @@ mod tests {
     fn parse_trailing_slash_rejected() {
         let s = format!("{}/a/", u());
         assert!(matches!(
-            Path::parse(&s),
+            GlobalObjPath::parse(&s),
             Err(PathError::Local(LocalError::TrailingSlash))
         ));
     }
 
     #[test]
     fn push_appends_segment() {
-        let mut p = Path::new(u(), "a").unwrap();
+        let mut p = GlobalObjPath::new(u(), "a").unwrap();
         p.push("b").unwrap();
         p.push("c").unwrap();
         assert_eq!(p.iter().collect::<Vec<_>>(), vec!["a", "b", "c"]);
@@ -234,14 +231,14 @@ mod tests {
     #[test]
     fn display_round_trips() {
         let s = format!("{}/a/b", u());
-        let p = Path::parse(&s).unwrap();
+        let p = GlobalObjPath::parse(&s).unwrap();
         assert_eq!(p.to_string(), s);
     }
 
     #[test]
     fn from_str_works() {
         let s = format!("{}/x", u());
-        let p: Path = s.parse().unwrap();
+        let p: GlobalObjPath = s.parse().unwrap();
         assert_eq!(p.entity(), u());
         assert_eq!(p.iter().collect::<Vec<_>>(), vec!["x"]);
     }

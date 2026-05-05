@@ -376,7 +376,7 @@ impl Graph {
     /// segment by segment. Returns the field reached by the last
     /// segment, or `None` if any segment is missing or attempts to
     /// traverse a non-object field.
-    fn navigate_object<'a>(obj: &'a Object, local: &LocalPath) -> Option<&'a Field> {
+    fn navigate_object<'a>(obj: &'a Object, local: &LocalObjPath) -> Option<&'a Field> {
         let mut iter = local.iter();
         let first = iter.next()?;
         let mut current = obj.get(first)?;

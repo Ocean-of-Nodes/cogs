@@ -1,4 +1,4 @@
-pub mod path;
+pub mod global_path;
 pub mod local_path;
 
 use std::collections::{HashMap, HashSet};
@@ -6,8 +6,8 @@ use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
 
-pub use path::Path;
-pub use local_path::LocalPath;
+pub use global_path::GlobalObjPath;
+pub use local_path::LocalObjPath;
 
 /// Used by db for tracker's that's accumulate changes 
 /// for caller that's want get it by next call
@@ -21,7 +21,7 @@ pub type EntityId = Uuid;
 #[derive(PartialEq, Eq, Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum Pointee {
     EntityId(EntityId),
-    Path(Path),
+    Path(GlobalObjPath),
 }
 
 impl From<EntityId> for Pointee {
@@ -82,7 +82,7 @@ pub enum ObjectDelta {
     SubObjectDelta {
         /// Path is a slash-separated string representing the path
         /// to the nested object
-        path: LocalPath,
+        path: LocalObjPath,
         delta: Vec<ObjectDelta>,
     },
 }
