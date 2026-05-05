@@ -1,7 +1,7 @@
+mod hyperedge;
 mod incidence;
 mod methods;
 mod paths;
-mod hyperedge;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -26,6 +26,8 @@ struct UnexistentPathError {
 }
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct NodeAlreadyExistsError(NodeId);
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct HyperEdgeAlreadyExistsError(HyperEdgeId);
 #[derive(Debug)]
 struct NodeNotFoundError(NodeId);
 #[derive(Debug)]
@@ -87,6 +89,7 @@ enum GetEdgeError {
 pub(crate) enum ApplyPatchError {
     NodeAlreadyExists(NodeAlreadyExistsError),
     AddEdge(AddEdgeError),
+    HyperEdgeAlreadyExists(HyperEdgeAlreadyExistsError),
     NotImplemented,
 }
 
@@ -388,19 +391,27 @@ impl Graph {
         }
         Some(current)
     }
-    
+
     /* ------------ END PROBS -------------------- */
 
     /* ------------ START CONSTRUCTORS ----------- */
-    
-    fn create_hyperedge(&mut self, members: HashSet<Pointee>) -> HyperEdgeId {
-        let id = Uuid::new_v4();
+
+    fn __create_hyperedge_with_id(
+        &mut self,
+        id: HyperEdgeId,
+        members: HashSet<Pointee>,
+    ) -> Result<(), HyperEdgeAlreadyExistsError> {
+        if self.hyper_edge.contains_key(&id) {
+            return Err(HyperEdgeAlreadyExistsError(id));
+        }
         self.hyper_edge.insert(id, members);
-        id
+        Ok(())
     }
 
-    fn __create_hyperedge_with_id(&mut self, id: HyperEdgeId, members: HashSet<Pointee>) {
-        self.hyper_edge.insert(id, members);
+    fn create_hyperedge(&mut self, members: HashSet<Pointee>) -> HyperEdgeId {
+        let id = Uuid::new_v4();
+        let _ = self.__create_hyperedge_with_id(id, members);
+        id
     }
 
     fn __add_node_with_id(
@@ -478,10 +489,9 @@ impl Graph {
             Patch::AddEdge { id, source, target } => self
                 .__add_edge_with_id(id, source, target)
                 .map_err(ApplyPatchError::AddEdge),
-            Patch::CreateHyperEdge { id, members } => {
-                self.__create_hyperedge_with_id(id, members);
-                Ok(())
-            }
+            Patch::CreateHyperEdge { id, members } => self
+                .__create_hyperedge_with_id(id, members)
+                .map_err(ApplyPatchError::HyperEdgeAlreadyExists),
             _ => Err(ApplyPatchError::NotImplemented),
         }
     }
@@ -498,7 +508,7 @@ impl Graph {
     pub fn remove_edge(&mut self, id: &Uuid) -> Result<Triplet, EdgeNotFoundError> {
         todo!()
     }
-    
+
     pub fn remove_hyperedge(&mut self, target: &HyperEdgeId) -> Option<HyperEdgeNotFound> {
         todo!()
     }
@@ -709,7 +719,7 @@ mod tests {
             let e_b = graph.add_edge(n3, n4).unwrap();
             let meta_edge = graph.add_edge(n1, e_b).unwrap();
 
-            let mut m  = HashSet::new();
+            let mut m = HashSet::new();
             m.insert(n3.into());
             m.insert(n4.into());
 
@@ -831,7 +841,7 @@ mod tests {
                 let e1 = g.add_edge(n1, n2).unwrap();
                 g.attach_obj(e1, obj.clone()).unwrap();
 
-                let mut m  = HashSet::new();
+                let mut m = HashSet::new();
                 m.insert(n1.into());
                 m.insert(n2.into());
 
@@ -965,6 +975,48 @@ mod tests {
                 assert_eq!(actual_set, expected);
             }
         }
+
+        mod test_iter_attached {
+            use super::*;
+
+            /// No attached objects yet — only nodes live in
+            /// `entities`, so `iter_attached` is empty.
+            #[test]
+            fn empty_when_only_nodes() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                g.add_node(obj.clone());
+                g.add_node(obj);
+                assert_eq!(g.iter_attached().count(), 0);
+            }
+
+            /// Yields exactly the ids on which `attach_obj` placed an
+            /// object — both edges and hyperedges qualify.
+            #[test]
+            fn yields_attach_targets() {
+                let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                    test_utils::create_semple_graph2();
+                let obj = test_utils::create_simple_obj("attached");
+
+                g.attach_obj(e_a, obj.clone()).unwrap();
+                g.attach_obj(h, obj).unwrap();
+
+                let actual: HashSet<_> = g.iter_attached().collect();
+                let expected: HashSet<_> = [e_a, h].into_iter().collect();
+                assert_eq!(actual, expected);
+            }
+
+            /// Complement of `iter_nodes`: a node id, even if it has
+            /// an object, must NOT appear in `iter_attached`.
+            #[test]
+            fn excludes_nodes() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                let n1 = g.add_node(obj);
+                let actual: HashSet<_> = g.iter_attached().collect();
+                assert!(!actual.contains(&n1));
+            }
+        }
     }
 
     mod test_getters {
@@ -1001,74 +1053,663 @@ mod tests {
                 // independent of any attach. It must still be there.
                 assert!(graph.obj(&n1).is_some());
             }
-        }
 
+            /// Unknown id resolves to `None`.
+            #[test]
+            fn obj_unknown() {
+                let g = Graph::default();
+                assert!(g.obj(&Uuid::new_v4()).is_none());
+            }
+
+            /// A bare edge (no `attach_obj` call) has no object.
+            #[test]
+            fn obj_bare_edge_is_none() {
+                let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                    test_utils::create_semple_graph2();
+                assert!(g.obj(&e_a).is_none());
+            }
+
+            /// A bare hyperedge has no object.
+            #[test]
+            fn obj_bare_hyperedge_is_none() {
+                let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                    test_utils::create_semple_graph2();
+                assert!(g.obj(&h).is_none());
+            }
+        }
 
         mod test_edge {
             use super::*;
 
+            /// Regular node-to-node edge round-trips through `edge`.
             #[test]
-            fn edge() {
+            fn edge1() {
+                let (graph, n1, n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                    test_utils::create_semple_graph2();
 
+                let u = graph.edge(&e_a).unwrap();
+                assert_eq!(
+                    u,
+                    Triplet {
+                        id: e_a,
+                        source: n1.into(),
+                        target: n2.into()
+                    }
+                )
             }
 
-            // TODO: test_get_edges in different subgraphs
-            /* 
+            /// Meta-edge: target is another edge — still in the
+            /// `edges` map, so `edge` returns its triplet.
             #[test]
-            fn test_get_edge_beetween_subgraph_and_parent() {
-                let mut graph = Graph::default();
-                let graph2 = Graph::default();
-                let path = PathBuf::from("subgraph");
-                graph.add_subgraph(&path, graph2).unwrap();
+            fn edge2() {
+                let (graph, n1, _n2, _n3, _n4, _e_a, e_b, meta_edge, _edge_to_h, _h) =
+                    test_utils::create_semple_graph2();
 
-                let field1 = Field::String("node1".to_string());
-                let field2 = Field::String("node2".to_string());
-                let node_id1 = graph.add_node(field1).unwrap();
-                let node_id2 = graph.subgraph(&path).unwrap().add_node(field2).unwrap();
-
-                let edge_id = graph.add_edge(node_id1, node_id2).unwrap();
-                assert!(graph.get_edge(&edge_id).is_some());
+                let u = graph.edge(&meta_edge).unwrap();
+                assert_eq!(
+                    u,
+                    Triplet {
+                        id: meta_edge,
+                        source: n1.into(),
+                        target: e_b.into(),
+                    }
+                )
             }
 
+            /// Edge whose target is a hyperedge — also lives in the
+            /// `edges` map.
             #[test]
-            fn test_get_edge_beetween_subgraphs_at_same_lvl() {
-                unimplemented!()
+            fn edge3() {
+                let (graph, n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, edge_to_h, h) =
+                    test_utils::create_semple_graph2();
+
+                let u = graph.edge(&edge_to_h).unwrap();
+                assert_eq!(
+                    u,
+                    Triplet {
+                        id: edge_to_h,
+                        source: n1.into(),
+                        target: h.into(),
+                    }
+                )
             }
 
+            /// Self-loop is a valid edge.
             #[test]
-            fn test_get_edge_beetween_subgraphs_at_different_lvl() {
-                unimplemented!()
+            fn edge4() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                let n1 = g.add_node(obj);
+                let e1 = g.add_edge(n1, n1).unwrap();
+
+                let u = g.edge(&e1).unwrap();
+                assert_eq!(
+                    u,
+                    Triplet {
+                        id: e1,
+                        source: n1.into(),
+                        target: n1.into(),
+                    }
+                )
             }
-            */
-        }
-    }
 
-    mod test_probs {
-        use super::*;
-
-        mod test_is_exist {
-            use super::*;
-            /// Test exist node
+            /// Endpoints can be sub-object paths; `edge` returns
+            /// them verbatim.
             #[test]
-            fn test_is_exist1() {
+            fn edge5() {
                 let mut g = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let n1 = g.add_node(obj.clone());
-                assert!(g.is_exist(&n1))
+                let n2 = g.add_node(obj);
+
+                let p1 = Pointee::Path(GlobalObjPath::new(n1, "test_field").unwrap());
+                let p2 = Pointee::Path(GlobalObjPath::new(n2, "test_field").unwrap());
+                let e1 = g.add_edge(p1.clone(), p2.clone()).unwrap();
+
+                let u = g.edge(&e1).unwrap();
+                assert_eq!(
+                    u,
+                    Triplet {
+                        id: e1,
+                        source: p1,
+                        target: p2,
+                    }
+                )
             }
 
-            /// Test exist edge
+            /// Unknown id → `NotFound`.
             #[test]
-            fn test_is_exist2() {}
+            fn edge_not_found() {
+                let g = Graph::default();
+                let id = Uuid::new_v4();
+                let err = g.edge(&id).unwrap_err();
+                assert!(matches!(
+                    err,
+                    GetEdgeError::NotFound(EntityNotFoundError(x)) if x == id
+                ));
+            }
 
-            /// Test exist hyperedge
+            /// A node id is a known entity but not an edge →
+            /// `IncorrectType("Node")`.
             #[test]
-            fn test_is_exist3() {}
+            fn edge_incorrect_type_node() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                let n1 = g.add_node(obj);
+
+                let err = g.edge(&n1).unwrap_err();
+                match err {
+                    GetEdgeError::IncorrectType(e) => {
+                        assert_eq!(e.node_id, n1);
+                        assert_eq!(e.actual_type, "Node");
+                    }
+                    other => panic!("expected IncorrectType, got {other:?}"),
+                }
+            }
+
+            /// A hyperedge id → `IncorrectType("HyperEdge")`.
+            #[test]
+            fn edge_incorrect_type_hyperedge() {
+                let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                    test_utils::create_semple_graph2();
+
+                let err = g.edge(&h).unwrap_err();
+                match err {
+                    GetEdgeError::IncorrectType(e) => {
+                        assert_eq!(e.node_id, h);
+                        assert_eq!(e.actual_type, "HyperEdge");
+                    }
+                    other => panic!("expected IncorrectType, got {other:?}"),
+                }
+            }
+
+            /// An attached-object id (object placed on top of a
+            /// hyperedge) → `IncorrectType("AttachedObject")`. The
+            /// hyperedge map lookup wins over the edges map only
+            /// because attaching to a hyperedge keeps the id outside
+            /// `edges`.
+            #[test]
+            fn edge_incorrect_type_attached() {
+                let (mut g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                    test_utils::create_semple_graph2();
+                let obj = test_utils::create_simple_obj("attached");
+                g.attach_obj(h, obj).unwrap();
+
+                let err = g.edge(&h).unwrap_err();
+                match err {
+                    GetEdgeError::IncorrectType(e) => {
+                        assert_eq!(e.node_id, h);
+                        assert_eq!(e.actual_type, "AttachedObject");
+                    }
+                    other => panic!("expected IncorrectType, got {other:?}"),
+                }
+            }
+        }
+
+        mod test_hyperedge {
+            use super::*;
+
+            #[test]
+            fn hyperedge1() {
+                let (graph, _n1, _n2, n3, n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                    test_utils::create_semple_graph2();
+
+                let members = graph.hyperedge_members(&h).unwrap();
+                let expected: HashSet<Pointee> = [n3.into(), n4.into()].into_iter().collect();
+                assert_eq!(members, &expected);
+            }
+
+            /// Unknown id → None.
+            #[test]
+            fn hyperedge_unknown() {
+                let g = Graph::default();
+                assert!(g.hyperedge_members(&Uuid::new_v4()).is_none());
+            }
+
+            /// An edge id is not a hyperedge → None.
+            #[test]
+            fn hyperedge_for_edge_id() {
+                let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                    test_utils::create_semple_graph2();
+                assert!(g.hyperedge_members(&e_a).is_none());
+            }
+
+            /// A hyperedge with no members yields an empty set.
+            #[test]
+            fn hyperedge_empty() {
+                let mut g = Graph::default();
+                let h = g.create_hyperedge(HashSet::new());
+                let members = g.hyperedge_members(&h).unwrap();
+                assert!(members.is_empty());
+            }
+        }
+
+        mod test_probs {
+            use super::*;
+
+            mod test_get_type {
+                use super::*;
+
+                /// Unknown id resolves to `None`.
+                #[test]
+                fn unknown_is_none() {
+                    let g = Graph::default();
+                    assert!(g.get_type(Uuid::new_v4()).is_none());
+                }
+
+                /// Pure node — only in `entities`.
+                #[test]
+                fn node() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+                    assert!(matches!(g.get_type(n1), Some(EntityType::Node)));
+                }
+
+                /// Regular edge — both endpoints are nodes.
+                #[test]
+                fn edge() {
+                    let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    assert!(matches!(g.get_type(e_a), Some(EntityType::Edge)));
+                }
+
+                /// Edge whose endpoint is another edge → MetaEdge.
+                #[test]
+                fn meta_edge_with_edge_endpoint() {
+                    let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    assert!(matches!(g.get_type(meta_edge), Some(EntityType::MetaEdge)));
+                }
+
+                /// Edge whose endpoint is a hyperedge → MetaEdge.
+                #[test]
+                fn meta_edge_with_hyperedge_endpoint() {
+                    let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    assert!(matches!(g.get_type(edge_to_h), Some(EntityType::MetaEdge)));
+                }
+
+                /// Pure hyperedge — only in `hyper_edge`.
+                #[test]
+                fn hyperedge() {
+                    let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                        test_utils::create_semple_graph2();
+                    assert!(matches!(g.get_type(h), Some(EntityType::HyperEdge)));
+                }
+
+                /// Object attached on top of an edge — id collides
+                /// in both `entities` and `edges` → AttachedObject.
+                #[test]
+                fn attached_on_edge() {
+                    let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    let obj = test_utils::create_simple_obj("attached");
+                    g.attach_obj(e_a, obj).unwrap();
+                    assert!(matches!(g.get_type(e_a), Some(EntityType::AttachedObject)));
+                }
+
+                /// Object attached on top of a hyperedge — id
+                /// collides in both `entities` and `hyper_edge` →
+                /// AttachedObject.
+                #[test]
+                fn attached_on_hyperedge() {
+                    let (mut g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                        test_utils::create_semple_graph2();
+                    let obj = test_utils::create_simple_obj("attached");
+                    g.attach_obj(h, obj).unwrap();
+                    assert!(matches!(g.get_type(h), Some(EntityType::AttachedObject)));
+                }
+
+                /// `Pointee::Path` endpoint must NOT promote an edge
+                /// to MetaEdge — only edge/hyperedge endpoints do.
+                #[test]
+                fn path_endpoint_stays_edge() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj.clone());
+                    let n2 = g.add_node(obj);
+
+                    let p1 = Pointee::Path(GlobalObjPath::new(n1, "test_field").unwrap());
+                    let e1 = g.add_edge(p1, n2).unwrap();
+                    assert!(matches!(g.get_type(e1), Some(EntityType::Edge)));
+                }
+            }
+
+            mod test_classify_pointee {
+                use super::*;
+
+                #[test]
+                fn entity_node() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+                    assert_eq!(g.classify_pointee(&n1.into()), Some(PointeeKind::Node));
+                }
+
+                #[test]
+                fn entity_edge() {
+                    let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    assert_eq!(g.classify_pointee(&e_a.into()), Some(PointeeKind::Edge));
+                }
+
+                #[test]
+                fn entity_hyperedge() {
+                    let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                        test_utils::create_semple_graph2();
+                    assert_eq!(g.classify_pointee(&h.into()), Some(PointeeKind::HyperEdge));
+                }
+
+                #[test]
+                fn entity_meta_edge() {
+                    let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    assert_eq!(
+                        g.classify_pointee(&meta_edge.into()),
+                        Some(PointeeKind::MetaEdge)
+                    );
+                }
+
+                #[test]
+                fn entity_attached() {
+                    let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    let obj = test_utils::create_simple_obj("attached");
+                    g.attach_obj(e_a, obj).unwrap();
+                    assert_eq!(
+                        g.classify_pointee(&e_a.into()),
+                        Some(PointeeKind::AttachedObject)
+                    );
+                }
+
+                #[test]
+                fn entity_unknown() {
+                    let g = Graph::default();
+                    let unknown: Pointee = Uuid::new_v4().into();
+                    assert_eq!(g.classify_pointee(&unknown), None);
+                }
+
+                /// Path that resolves to a real field → Subobject.
+                #[test]
+                fn path_resolves() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+                    let p = Pointee::Path(GlobalObjPath::new(n1, "test_field").unwrap());
+                    assert_eq!(g.classify_pointee(&p), Some(PointeeKind::Subobject));
+                }
+
+                /// Path whose entity isn't in the graph → None.
+                #[test]
+                fn path_unknown_entity() {
+                    let g = Graph::default();
+                    let p = Pointee::Path(GlobalObjPath::new(Uuid::new_v4(), "x").unwrap());
+                    assert_eq!(g.classify_pointee(&p), None);
+                }
+
+                /// Path whose entity exists but the field is missing
+                /// → None.
+                #[test]
+                fn path_missing_field() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+                    let p = Pointee::Path(GlobalObjPath::new(n1, "no_such_field").unwrap());
+                    assert_eq!(g.classify_pointee(&p), None);
+                }
+            }
+
+            mod test_is_exist {
+                use super::*;
+                /// Test exist node
+                #[test]
+                fn test_is_exist1() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj.clone());
+                    assert!(g.is_exist(&n1))
+                }
+
+                /// Test exist edge
+                #[test]
+                fn test_is_exist2() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj.clone());
+                    let n2 = g.add_node(obj);
+                    let e1 = g.add_edge(n1, n2).unwrap();
+                    assert!(g.is_exist(&e1))
+                }
+
+                /// Test exist hyperedge
+                #[test]
+                fn test_is_exist3() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj.clone());
+                    let n2 = g.add_node(obj);
+                    let mut m = HashSet::new();
+                    m.insert(n1.into());
+                    m.insert(n2.into());
+                    let h = g.create_hyperedge(m);
+                    assert!(g.is_exist(&h))
+                }
+
+                /// Test exist metaedge (an edge whose endpoint is another edge)
+                #[test]
+                fn test_is_exist4() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj.clone());
+                    let n2 = g.add_node(obj);
+                    let e1 = g.add_edge(n1, n2).unwrap();
+                    let meta_edge = g.add_edge(n1, e1).unwrap();
+                    assert!(g.is_exist(&meta_edge))
+                }
+            }
+
+            mod test_is_pointee_exist {
+                use super::*;
+
+                #[test]
+                fn entity_node() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+                    assert!(g.is_pointee_exist(&n1.into()));
+                }
+
+                #[test]
+                fn entity_edge() {
+                    let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    assert!(g.is_pointee_exist(&e_a.into()));
+                }
+
+                #[test]
+                fn entity_hyperedge() {
+                    let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                        test_utils::create_semple_graph2();
+                    assert!(g.is_pointee_exist(&h.into()));
+                }
+
+                #[test]
+                fn entity_meta_edge() {
+                    let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    assert!(g.is_pointee_exist(&meta_edge.into()));
+                }
+
+                #[test]
+                fn entity_attached() {
+                    let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    let obj = test_utils::create_simple_obj("attached");
+                    g.attach_obj(e_a, obj).unwrap();
+                    assert!(g.is_pointee_exist(&e_a.into()));
+                }
+
+                #[test]
+                fn entity_unknown() {
+                    let g = Graph::default();
+                    let unknown: Pointee = Uuid::new_v4().into();
+                    assert!(!g.is_pointee_exist(&unknown));
+                }
+
+                /// Path resolves to a real top-level field.
+                #[test]
+                fn path_resolves() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+                    let p = Pointee::Path(GlobalObjPath::new(n1, "test_field").unwrap());
+                    assert!(g.is_pointee_exist(&p));
+                }
+
+                /// Path descends through a nested `Field::Object`.
+                #[test]
+                fn path_resolves_nested() {
+                    let mut g = Graph::default();
+                    let mut inner = Object::new();
+                    inner.insert("leaf".into(), Field::Null);
+                    let mut obj = Object::new();
+                    obj.insert("nested".into(), Field::Object(inner));
+                    let n1 = g.add_node(obj);
+
+                    let mut path = GlobalObjPath::new(n1, "nested").unwrap();
+                    path.push("leaf").unwrap();
+                    let p = Pointee::Path(path);
+                    assert!(g.is_pointee_exist(&p));
+                }
+
+                /// Entity isn't in the graph.
+                #[test]
+                fn path_unknown_entity() {
+                    let g = Graph::default();
+                    let p = Pointee::Path(GlobalObjPath::new(Uuid::new_v4(), "x").unwrap());
+                    assert!(!g.is_pointee_exist(&p));
+                }
+
+                /// Entity exists but the first segment doesn't match
+                /// any top-level field.
+                #[test]
+                fn path_missing_field() {
+                    let mut g = Graph::default();
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+                    let p = Pointee::Path(GlobalObjPath::new(n1, "no_such_field").unwrap());
+                    assert!(!g.is_pointee_exist(&p));
+                }
+
+                /// Walking a path through a non-Object field
+                /// (e.g. `Field::Null`) must fail.
+                #[test]
+                fn path_through_non_object_fails() {
+                    let mut g = Graph::default();
+                    // "test_field" is a Field::Null — it is not an
+                    // Object, so any further descent must fail.
+                    let obj = test_utils::create_simple_obj("test_field");
+                    let n1 = g.add_node(obj);
+
+                    let mut path = GlobalObjPath::new(n1, "test_field").unwrap();
+                    path.push("anything").unwrap();
+                    let p = Pointee::Path(path);
+                    assert!(!g.is_pointee_exist(&p));
+                }
+
+                /// Edge id with a sub-path doesn't navigate — only
+                /// `entities` is consulted, and a bare edge has no
+                /// attached object.
+                #[test]
+                fn path_on_bare_edge_fails() {
+                    let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
+                        test_utils::create_semple_graph2();
+                    let p = Pointee::Path(GlobalObjPath::new(e_a, "x").unwrap());
+                    assert!(!g.is_pointee_exist(&p));
+                }
+            }
         }
     }
 
     mod test_constructors {
         use super::*;
+
+        mod test_create_hyperedge {
+            use super::*;
+
+            /// Create a hyperedge with two members and verify
+            /// both id presence and members round-trip.
+            #[test]
+            fn create_hyperedge1() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+
+                let mut members = HashSet::new();
+                members.insert(n1.into());
+                members.insert(n2.into());
+
+                let h = g.create_hyperedge(members.clone());
+                assert!(g.is_exist(&h));
+                assert_eq!(g.hyperedge_members(&h), Some(&members));
+            }
+
+            /// An empty member set is a valid hyperedge.
+            #[test]
+            fn create_hyperedge_empty() {
+                let mut g = Graph::default();
+                let h = g.create_hyperedge(HashSet::new());
+                assert_eq!(g.hyperedge_members(&h), Some(&HashSet::new()));
+            }
+
+            /// Members may include other hyperedges (nesting) and
+            /// edge ids — `create_hyperedge` doesn't validate
+            /// membership shape.
+            #[test]
+            fn create_hyperedge_with_edge_and_hyperedge_members() {
+                let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, h) =
+                    test_utils::create_semple_graph2();
+
+                let mut members = HashSet::new();
+                members.insert(e_a.into());
+                members.insert(h.into());
+
+                let h2 = g.create_hyperedge(members.clone());
+                assert_eq!(g.hyperedge_members(&h2), Some(&members));
+            }
+
+            /// `__create_hyperedge_with_id` rejects a duplicate id.
+            #[test]
+            fn create_hyperedge_already_exists() {
+                let mut g = Graph::default();
+                let h = g.create_hyperedge(HashSet::new());
+                let err = g
+                    .__create_hyperedge_with_id(h, HashSet::new())
+                    .unwrap_err();
+                assert_eq!(err, HyperEdgeAlreadyExistsError(h));
+            }
+
+            /// Re-inserting with the same id must NOT clobber the
+            /// existing members — the original hyperedge stays
+            /// intact.
+            #[test]
+            fn create_hyperedge_already_exists_preserves_members() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                let n1 = g.add_node(obj);
+
+                let mut original = HashSet::new();
+                original.insert(n1.into());
+                let h = g.create_hyperedge(original.clone());
+
+                // Try to overwrite with a different (empty) member set.
+                let _ = g.__create_hyperedge_with_id(h, HashSet::new());
+
+                assert_eq!(g.hyperedge_members(&h), Some(&original));
+            }
+        }
 
         mod test_add_node {
             use super::*;
@@ -1169,139 +1810,4 @@ mod tests {
             }
         }
     }
-    /*
-    mod test_constructors_and_getters {
-        use super::*;
-
-        #[test]
-        fn test_add_edge() {
-            let mut graph = Graph::default();
-            let field1 = Field::String("node1".to_string());
-            let field2 = Field::String("node2".to_string());
-            let node_id1 = graph.add_node(field1).unwrap();
-            let node_id2 = graph.add_node(field2).unwrap();
-
-            let edge_result = graph.add_edge(node_id1, node_id2);
-            assert!(edge_result.is_ok());
-            let edge_id = edge_result.unwrap();
-            assert!(graph.get_edge(&edge_id).is_some());
-        }
-
-        #[test]
-        fn test_create_subgraph_and_get_it() {
-            let mut graph = Graph::default();
-            let graph2 = Graph::default();
-            let graph3 = Graph::default();
-            let mut path = PathBuf::from("subgraph1");
-            graph.add_subgraph(&path, graph2).unwrap();
-            path.push("subgraph2");
-            graph.add_subgraph(&path, graph3).unwrap();
-            assert!(graph.subgraph(&path).is_some());
-        }
-
-        #[test]
-        fn test_get_field_from_subgraph() {
-            let mut graph = Graph::default();
-            let graph2 = Graph::default();
-            let path = PathBuf::from("subgraph");
-            graph.add_subgraph(&path, graph2).unwrap();
-            let field = Field::String("test".to_string());
-            let node_id = graph
-                .subgraph(&path)
-                .unwrap()
-                .add_node(field.clone())
-                .unwrap();
-            assert_eq!(graph.subgraph(&path).unwrap().field(&node_id), Some(&field));
-        } 
-
-        #[test]
-        fn test_get_node_of_edge_beetween_subgraphs_at_different_lvl() {
-            unimplemented!()
-        }
-
-        #[test]
-        fn test_get_node_of_edge_beetween_subgraph_and_parent() {
-            unimplemented!()
-        }
-
-        #[test]
-        fn test_get_node_of_edge_beetween_subgraphs_at_same_lvl() {
-            unimplemented!()
-        }
-    }
-
-    mod test_probs {
-        use super::*;
-
-        #[test]
-        fn test_is_node_and_is_edge() {
-            let mut graph = Graph::default();
-            let field = Field::String("test".to_string());
-            let node_id = graph.add_node(field).unwrap();
-            assert!(graph.is_node(&node_id));
-            assert!(!graph.is_edge(&node_id));
-
-            let edge_id = graph.add_edge(node_id, node_id).unwrap();
-            assert!(graph.is_edge(&edge_id));
-        }
-
-        #[test]
-        fn test_is_existing_path() {
-            let mut graph = Graph::default();
-            let field1 = Field::String("node1".to_string());
-            let field2 = Field::String("node2".to_string());
-            let node_id1 = graph.add_node(field1).unwrap();
-            let node_id2 = graph.add_node(field2).unwrap();
-            graph.add_edge(node_id1, node_id2).unwrap();
-
-            let field3 = Field::String("node3".to_string());
-            let field4 = Field::String("node4".to_string());
-            let node_id3 = graph.add_node(field3).unwrap();
-            let node_id4 = graph.add_node(field4).unwrap();
-            graph.add_edge(node_id3, node_id4).unwrap();
-
-            graph.add_edge(node_id1, node_id4).unwrap();
-
-            assert!(graph.is_existing_path(&node_id3, &node_id2).unwrap());
-        }
-    }
-
-    mod bench {
-        use super::*;
-
-        /// TODO: after implementation of JIT, test that
-        ///
-        /// G.entities().filter(|id| G.is_edge(id)).collect()
-        /// and
-        /// G.edges().collect()
-        /// should have same behavior after JIT
-        /// and same speed
-        fn eq_behavior1() {
-            let mut graph = Graph::default();
-            unimplemented!();
-            graph
-                .global_entities()
-                .filter(|id| graph.is_edge(id))
-                .for_each(|_| {});
-            graph.global_edges().for_each(|_| {});
-        }
-
-        /// TODO: after implementation of JIT, test that
-        ///
-        /// G.entities().filter(|id| G.is_node(id)).collect()
-        /// and
-        /// G.nodes().collect()
-        /// should have same behavior after JIT
-        /// and same speed
-        fn eq_behavior2() {
-            let mut graph = Graph::default();
-            unimplemented!();
-            graph
-                .global_entities()
-                .filter(|id| graph.is_node(id))
-                .for_each(|_| {});
-            graph.global_nodes().for_each(|_| {});
-        }
-    }
-    */
 }
