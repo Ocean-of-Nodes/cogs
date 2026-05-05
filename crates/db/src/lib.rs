@@ -1,5 +1,6 @@
 mod incidence;
 mod methods;
+mod paths;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ struct UnexistentPathError {
     valid_path_part: PathBuf,
 }
 #[derive(Clone, PartialEq, Eq, Debug)]
-struct NodeAlreadyExistsError(NodeId);
+pub(crate) struct NodeAlreadyExistsError(NodeId);
 #[derive(Debug)]
 struct NodeNotFoundError(NodeId);
 #[derive(Debug)]
@@ -39,7 +40,7 @@ struct IncorrectTypeError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum AddEdgeError {
+pub(crate) enum AddEdgeError {
     MissingEndpointsError(MissingEndpointsError),
     EdgeAlreadyExists(EdgeID),
 }
@@ -71,6 +72,19 @@ enum AttachNodeError {
 enum GetEdgeError {
     NotFound(EntityNotFoundError),
     IncorrectType(IncorrectTypeError),
+}
+
+/// Errors returned by [`Graph::apply_patch`].
+///
+/// Currently only `AddNode` and `AddEdge` are implemented — the
+/// other `Patch` variants return `NotImplemented`. This is enough
+/// to let algorithms (e.g. in `paths`) construct a result graph
+/// while preserving original ids.
+#[derive(Debug)]
+pub(crate) enum ApplyPatchError {
+    NodeAlreadyExists(NodeAlreadyExistsError),
+    AddEdge(AddEdgeError),
+    NotImplemented,
 }
 
 /// Triplet is a link beetween two pointees
@@ -219,205 +233,6 @@ impl Graph {
         self.entities.get(id)
     }
 
-    /// Return all simple paths from `lhs` to `rhs` packed into a
-    /// single sub-graph. The direction of each edge is **ignored** —
-    /// every edge can be traversed both ways. The result is the
-    /// union of nodes and edges that lie on at least one such path,
-    /// with edges keeping their original `(source, target)`
-    /// orientation (we only relax direction during traversal, not in
-    /// the returned graph).
-    ///
-    /// "Simple" means each node is visited at most once on a single
-    /// path. Parallel edges between the same pair of nodes contribute
-    /// distinct paths and all show up in the result.
-    pub fn undirected_paths(&mut self, lhs: NodeId, rhs: NodeId) -> Graph {
-        let mut result = Graph::default();
-
-        if lhs == rhs {
-            if let Some(obj) = self.entities.get(&lhs) {
-                result.entities.insert(lhs, obj.clone());
-            }
-            return result;
-        }
-
-        let lhs_p = Pointee::EntityId(lhs);
-        let rhs_p = Pointee::EntityId(rhs);
-
-        // Adjacency: each edge contributes BOTH directions so DFS
-        // can traverse against the original `source → target`.
-        let mut adj: HashMap<Pointee, Vec<(EdgeID, Pointee)>> = HashMap::new();
-        for (eid, (s, t)) in &self.edges {
-            adj.entry(s.clone()).or_default().push((*eid, t.clone()));
-            adj.entry(t.clone()).or_default().push((*eid, s.clone()));
-        }
-        let mut visited: HashSet<Pointee> = HashSet::from([lhs_p.clone()]);
-        // Stack only holds edge ids; original source/target are
-        // looked up in `self.edges` when a path is recorded, so the
-        // result preserves the real direction regardless of how DFS
-        // walked the edge.
-        let mut stack: Vec<EdgeID> = Vec::new();
-
-        fn dfs(
-            cur: &Pointee,
-            target: &Pointee,
-            adj: &HashMap<Pointee, Vec<(EdgeID, Pointee)>>,
-            edges_table: &HashMap<EdgeID, (Pointee, Pointee)>,
-            entities: &HashMap<EntityId, Object>,
-            visited: &mut HashSet<Pointee>,
-            stack: &mut Vec<EdgeID>,
-            result: &mut Graph,
-        ) {
-            let Some(outgoing) = adj.get(cur) else {
-                return;
-            };
-            for (eid, next) in outgoing {
-                if visited.contains(next) {
-                    continue;
-                }
-                stack.push(*eid);
-                if next == target {
-                    for path_eid in &*stack {
-                        if let Some((s, t)) = edges_table.get(path_eid) {
-                            result.edges.insert(*path_eid, (s.clone(), t.clone()));
-                            copy_entity_obj(s, entities, &mut result.entities);
-                            copy_entity_obj(t, entities, &mut result.entities);
-                        }
-                    }
-                } else {
-                    visited.insert(next.clone());
-                    dfs(next, target, adj, edges_table, entities, visited, stack, result);
-                    visited.remove(next);
-                }
-                stack.pop();
-            }
-        }
-
-        fn copy_entity_obj(
-            p: &Pointee,
-            src_entities: &HashMap<EntityId, Object>,
-            dst_entities: &mut HashMap<EntityId, Object>,
-        ) {
-            if let Pointee::EntityId(id) = p {
-                if let Some(obj) = src_entities.get(id) {
-                    dst_entities.insert(*id, obj.clone());
-                }
-            }
-        }
-
-        dfs(
-            &lhs_p,
-            &rhs_p,
-            &adj,
-            &self.edges,
-            &self.entities,
-            &mut visited,
-            &mut stack,
-            &mut result,
-        );
-
-        result
-    }
-
-    /// Return all simple directed paths from `lhs` to `rhs` packed
-    /// into a single sub-graph: the union of nodes and edges that
-    /// lie on at least one path. Edges shared by several paths
-    /// appear once. Direction is honoured (`source → target` only);
-    /// hyperedges are ignored.
-    ///
-    /// "Simple" means no node is visited twice on a single path —
-    /// cycles never blow up the search.
-    ///
-    /// If no path exists the result is empty. If `lhs == rhs` the
-    /// result is a singleton graph with just `lhs`.
-    ///
-    /// # Complexity
-    ///
-    /// In the worst case the number of simple paths is exponential
-    /// in the number of nodes, so this is a heavy operation on
-    /// dense graphs. It's fine for analysis-style queries on small
-    /// neighbourhoods.
-    pub fn directed_paths(&mut self, lhs: NodeId, rhs: NodeId) -> Graph {
-        let mut result = Graph::default();
-
-        if lhs == rhs {
-            if let Some(obj) = self.entities.get(&lhs) {
-                result.entities.insert(lhs, obj.clone());
-            }
-            return result;
-        }
-
-        let lhs_p = Pointee::EntityId(lhs);
-        let rhs_p = Pointee::EntityId(rhs);
-
-        // Adjacency: source → [(edge_id, target), ...]. Built once
-        // in O(E); turns BFS/DFS into O(V + E) instead of O(V * E).
-        let mut adj: HashMap<Pointee, Vec<(EdgeID, Pointee)>> = HashMap::new();
-        for (eid, (s, t)) in &self.edges {
-            adj.entry(s.clone()).or_default().push((*eid, t.clone()));
-        }
-        let mut visited: HashSet<Pointee> = HashSet::from([lhs_p.clone()]);
-        let mut stack: Vec<(EdgeID, Pointee, Pointee)> = Vec::new();
-
-        // Recursive DFS, enumerating simple paths. On every successful
-        // arrival at `rhs`, the entire current path is dumped into
-        // `result` (which dedupes via HashMap).
-        fn dfs(
-            cur: &Pointee,
-            target: &Pointee,
-            adj: &HashMap<Pointee, Vec<(EdgeID, Pointee)>>,
-            entities: &HashMap<EntityId, Object>,
-            visited: &mut HashSet<Pointee>,
-            stack: &mut Vec<(EdgeID, Pointee, Pointee)>,
-            result: &mut Graph,
-        ) {
-            fn copy_entity_obj(
-                p: &Pointee,
-                src_entities: &HashMap<EntityId, Object>,
-                dst_entities: &mut HashMap<EntityId, Object>,
-            ) {
-                if let Pointee::EntityId(id) = p {
-                    if let Some(obj) = src_entities.get(id) {
-                        dst_entities.insert(*id, obj.clone());
-                    }
-                }
-            }
-
-            let Some(outgoing) = adj.get(cur) else {
-                return;
-            };
-            for (eid, next) in outgoing {
-                if visited.contains(next) {
-                    continue;
-                }
-                stack.push((*eid, cur.clone(), next.clone()));
-                if next == target {
-                    for (eid, src, tgt) in &*stack {
-                        result.edges.insert(*eid, (src.clone(), tgt.clone()));
-                        copy_entity_obj(src, entities, &mut result.entities);
-                        copy_entity_obj(tgt, entities, &mut result.entities);
-                    }
-                } else {
-                    visited.insert(next.clone());
-                    dfs(next, target, adj, entities, visited, stack, result);
-                    visited.remove(next);
-                }
-                stack.pop();
-            }
-        }
-
-        dfs(
-            &lhs_p,
-            &rhs_p,
-            &adj,
-            &self.entities,
-            &mut visited,
-            &mut stack,
-            &mut result,
-        );
-
-        result
-    }
-    
     /// Get a triplet by id.
     ///
     /// # Errors
@@ -570,140 +385,7 @@ impl Graph {
         }
         Some(current)
     }
-    /*
-    /// Check that `source` and `target` exist.
-    /// Returns [`MissingEndpointsError`] with unexist endpoints
-    fn __ensure_endpoints_exist(
-        &self,
-        source: &EntityId,
-        target: &EntityId,
-    ) -> Result<(), MissingEndpointsError> {
-        let mut missing_endpoints = Vec::new();
-        if !self.is_exist(source) {
-            missing_endpoints.push(*source);
-        }
-        if !self.is_exist(target) {
-            missing_endpoints.push(*target);
-        }
-
-        if missing_endpoints.is_empty() {
-            Ok(())
-        } else {
-            Err(MissingEndpointsError { missing_endpoints })
-        }
-    }
-
-    /// Returns `true` if a path exists between `source` and `target`
-    /// while staying within entities of the **same kind** — that is,
-    /// node-to-node or edge-to-edge, but never crossing between them.
-    ///
-    /// Two nodes count as connected when an edge has them as its
-    /// endpoints. Two edges count as connected when a meta-edge — an
-    /// edge whose endpoints are themselves edges — links them. A
-    /// mixed query (one node and one edge) therefore always returns
-    /// `Ok(false)`: there is no same-kind path between them by
-    /// definition. Use [`Graph::is_linked`] for connectivity that may
-    /// freely traverse both nodes and edges.
-    ///
-    /// # Example
-    ///
-    /// ```text
-    ///   n1 --(e1)--> n2
-    ///         ^
-    ///         |
-    ///        (e3)
-    ///         |
-    ///   n3 --(e2)--> n4
-    ///         ^
-    ///         |
-    ///        (e5)
-    ///         |
-    ///   n5 --(e4)--> n6 --(e6)--> n7
-    /// ```
-    ///
-    /// - `is_existing_path(e1, e4)` → `Ok(true)`  — via the meta-edge
-    ///   chain `e1 — e3 — e2 — e5 — e4`.
-    /// - `is_existing_path(n5, n7)` → `Ok(true)`  — via the node
-    ///   chain `n5 — e4 — n6 — e6 — n7`.
-    /// - `is_existing_path(e1, n6)` → `Ok(false)` — an edge and a
-    ///   node are never on the same-kind path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingEndpointsError`] if `source` or `target` does
-    /// not exist anywhere in this graph or its subgraphs.
-    pub fn is_existing_path(
-        &self,
-        source: &EntityId,
-        target: &EntityId,
-    ) -> Result<bool, MissingEndpointsError> {
-        self.__ensure_endpoints_exist(source, target)?;
-
-        if self.is_node(source) && self.is_node(target) {
-            // Check node-to-node path
-            unimplemented!()
-        } else if self.is_edge(source) && self.is_edge(target) {
-            // Check edge-to-edge path
-            unimplemented!()
-        } else {
-            // Mixed query: one node and one edge
-            Ok(false)
-        }
-    }
-
-    /// Returns `true` if a path exists between `source` and `target`
-    /// when traversal may freely cross between nodes and edges.
-    ///
-    /// An entity is incident with another whenever an edge — regular
-    /// or meta — connects them. Unlike [`Graph::is_existing_path`],
-    /// which stays within entities of one kind, `is_linked` treats
-    /// nodes and edges uniformly: a node reaches an adjacent edge
-    /// through that edge's endpoints, and an edge reaches another
-    /// edge through any meta-edge between them.
-    ///
-    /// As a consequence, `is_linked` is at least as permissive as
-    /// `is_existing_path` — every same-kind path is also a cross-kind
-    /// path, but not every cross-kind path is same-kind.
-    ///
-    /// # Example
-    ///
-    /// ```text
-    ///   n1 --(e1)--> n2
-    ///         ^
-    ///         |
-    ///        (e3)
-    ///         |
-    ///   n3 --(e2)--> n4
-    ///         ^
-    ///         |
-    ///        (e5)
-    ///         |
-    ///   n5 --(e4)--> n6 --(e6)--> n7
-    /// ```
-    ///
-    /// - `reachable(e1, e4)` → `Ok(true)`  — via `e1 — e3 — e2 — e5 — e4`
-    ///   (same route as `is_existing_path`).
-    /// - `reachable(n5, n7)` → `Ok(true)`  — via `n5 — e4 — n6 — e6 — n7`
-    ///   (same route as `is_existing_path`).
-    /// - `reachable(e1, n6)` → `Ok(true)`  — via
-    ///   `e1 — e3 — e2 — e5 — e4 — n6`. The same query is `Ok(false)`
-    ///   for [`Graph::is_existing_path`], which forbids crossing
-    ///   between an edge and a node.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`MissingEndpointsError`] if `source` or `target` does
-    /// not exist anywhere in this graph or its subgraphs.
-    pub fn reachable(
-        &self,
-        source: &EntityId,
-        target: &EntityId,
-    ) -> Result<bool, MissingEndpointsError> {
-        self.__ensure_endpoints_exist(source, target)?;
-
-        unimplemented!()
-    }
-    */
+    
     /* ------------ END PROBS -------------------- */
 
     /* ------------ START CONSTRUCTORS ----------- */
@@ -712,6 +394,10 @@ impl Graph {
         let id = Uuid::new_v4();
         self.hyper_edge.insert(id, members);
         id
+    }
+
+    fn __create_hyperedge_with_id(&mut self, id: HyperEdgeId, members: Vec<Pointee>) {
+        self.hyper_edge.insert(id, members);
     }
 
     fn __add_node_with_id(
@@ -772,6 +458,30 @@ impl Graph {
             .map(|_| edge_id)?;
         Ok(edge_id)
     }
+
+    /// Apply a single [`Patch`] to this graph.
+    ///
+    /// Currently `AddNode`, `AddEdge`, and `CreateHyperEdge` are
+    /// wired up — the other variants return
+    /// [`ApplyPatchError::NotImplemented`]. The minimal
+    /// implementation is enough to let algorithms (e.g. in `paths`)
+    /// build a result graph that preserves the original ids of
+    /// nodes, edges, and hyperedges.
+    pub(crate) fn apply_patch(&mut self, patch: Patch) -> Result<(), ApplyPatchError> {
+        match patch {
+            Patch::AddNode { id, obj } => self
+                .__add_node_with_id(id, obj)
+                .map_err(ApplyPatchError::NodeAlreadyExists),
+            Patch::AddEdge { id, source, target } => self
+                .__add_edge_with_id(id, source, target)
+                .map_err(ApplyPatchError::AddEdge),
+            Patch::CreateHyperEdge { id, members } => {
+                self.__create_hyperedge_with_id(id, members);
+                Ok(())
+            }
+            _ => Err(ApplyPatchError::NotImplemented),
+        }
+    }
     /*
     /* ------------ END CONSTRUCTORS ------------- */
 
@@ -788,6 +498,9 @@ impl Graph {
             .position(|triplet| &triplet.id == id)
             .map(|index| self.edges.remove(index))
             .ok_or_else(|| EdgeNotFoundError(*id))
+    }
+
+    pub fn remove_hyperedge() {
     }
 
     /* ------------ END DESTRUCTORS ------------- */
@@ -1279,47 +992,6 @@ mod tests {
             }
         }
 
-        mod test_undirected_paths {
-            use super::*;
-
-            /// Direction is ignored, so even though `e2` is recorded
-            /// `n3 → n1`, the undirected walk uses it as `n1 → n3`.
-            /// All four edges should appear in the result.
-            #[test]
-            fn undirected_paths() {
-                let (mut graph, n1, n2, n3, e1, e2, e3, e4) =
-                    test_utils::create_semple_graph3();
-
-                let result = graph.undirected_paths(n1, n2);
-
-                let result_nodes: HashSet<_> = result.iter_nodes().collect();
-                let result_edges: HashSet<_> = result.iter_edges().collect();
-
-                assert_eq!(result_nodes, [n1, n2, n3].into_iter().collect());
-                assert_eq!(result_edges, [e1, e2, e3, e4].into_iter().collect());
-            }
-        }
-
-        mod test_directed_paths {
-            use super::*;
-
-            /// Direction matters. The only `n1 → n2` path is `e1`:
-            /// `e2` goes `n3 → n1` (wrong way), so we never reach
-            /// `n3` from `n1`, and `e3`/`e4` are unreachable.
-            #[test]
-            fn directed_paths() {
-                let (mut graph, n1, n2, _n3, e1, _e2, _e3, _e4) =
-                    test_utils::create_semple_graph3();
-
-                let result = graph.directed_paths(n1, n2);
-
-                let result_nodes: HashSet<_> = result.iter_nodes().collect();
-                let result_edges: HashSet<_> = result.iter_edges().collect();
-
-                assert_eq!(result_nodes, [n1, n2].into_iter().collect());
-                assert_eq!(result_edges, [e1].into_iter().collect());
-            }
-        }
 
         mod test_edge {
             use super::*;
@@ -1329,34 +1001,34 @@ mod tests {
 
             }
 
-             // TODO: test_get_edges in different subgraphs
-             /* 
-                #[test]
-                fn test_get_edge_beetween_subgraph_and_parent() {
-                    let mut graph = Graph::default();
-                    let graph2 = Graph::default();
-                    let path = PathBuf::from("subgraph");
-                    graph.add_subgraph(&path, graph2).unwrap();
+            // TODO: test_get_edges in different subgraphs
+            /* 
+            #[test]
+            fn test_get_edge_beetween_subgraph_and_parent() {
+                let mut graph = Graph::default();
+                let graph2 = Graph::default();
+                let path = PathBuf::from("subgraph");
+                graph.add_subgraph(&path, graph2).unwrap();
 
-                    let field1 = Field::String("node1".to_string());
-                    let field2 = Field::String("node2".to_string());
-                    let node_id1 = graph.add_node(field1).unwrap();
-                    let node_id2 = graph.subgraph(&path).unwrap().add_node(field2).unwrap();
+                let field1 = Field::String("node1".to_string());
+                let field2 = Field::String("node2".to_string());
+                let node_id1 = graph.add_node(field1).unwrap();
+                let node_id2 = graph.subgraph(&path).unwrap().add_node(field2).unwrap();
 
-                    let edge_id = graph.add_edge(node_id1, node_id2).unwrap();
-                    assert!(graph.get_edge(&edge_id).is_some());
-                }
+                let edge_id = graph.add_edge(node_id1, node_id2).unwrap();
+                assert!(graph.get_edge(&edge_id).is_some());
+            }
 
-                #[test]
-                fn test_get_edge_beetween_subgraphs_at_same_lvl() {
-                    unimplemented!()
-                }
+            #[test]
+            fn test_get_edge_beetween_subgraphs_at_same_lvl() {
+                unimplemented!()
+            }
 
-                #[test]
-                fn test_get_edge_beetween_subgraphs_at_different_lvl() {
-                    unimplemented!()
-                }
-             */
+            #[test]
+            fn test_get_edge_beetween_subgraphs_at_different_lvl() {
+                unimplemented!()
+            }
+            */
         }
     }
 
