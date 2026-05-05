@@ -107,6 +107,10 @@ pub enum Patch {
         id: NodeId,
         delta: Vec<ObjectDelta>,
     },
+    ReplaceNode {
+        id: NodeId,
+         obj: Object,
+    },
 
     // ------------- END NODE DELTA --------------
 
@@ -123,10 +127,22 @@ pub enum Patch {
         id: EdgeID,
         new_target: RetrargetEdge,
     },
+    ReplaceEdgeData {
+        id: EdgeID,
+        obj: Object,
+    },
+    ChangeEdgeData {
+        id: AttachTargetID,
+        delta: Vec<ObjectDelta>,
+    },
+    RemoveEdgeData {
+        id: AttachTargetID,
+    },
 
     // ------------- END EDGE DELTA --------------
 
     // ------------- START HYPER EDGE --------------
+    
     CreateHyperEdge {
         id: HyperEdgeId,
         members: HashSet<Pointee>,
@@ -142,9 +158,17 @@ pub enum Patch {
         id: HyperEdgeId,
         members: HashSet<Pointee>,
     },
-    MergeHyperEdge {
-        lhs: HyperEdgeId,
-        rhs: HyperEdgeId,
+    ReplaceHyperEdgeData {
+        id: HyperEdgeId,
+        obj: Object,
     },
+    ChangeHyperEdgeData {
+        id: HyperEdgeId,
+        delta: Vec<ObjectDelta>,
+    },
+    RemoveHyperEdgeData {
+        id: HyperEdgeId,
+    },
+
     // ------------- END HYPER EDGE --------------
 }
