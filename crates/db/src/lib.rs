@@ -1,5 +1,5 @@
+mod incidence;
 mod methods;
-mod neighborhood;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -213,30 +213,6 @@ impl Graph {
 
     /* ------------ START GETTERS ------------------- */
 
-    /// Get all edges incident to `id` — every edge that has
-    /// `Pointee::EntityId(id)` as its `source` or `target`.
-    /// Hyperedges are not included here; iterate
-    /// [`Graph::iter_hyperedge`] separately if needed.
-    ///
-    /// Note: edges whose endpoint is a subobject of `id` (i.e.
-    /// `Pointee::Path { entity: id, .. }`) are **not** returned —
-    /// the matching is on `Pointee::EntityId(id)` exactly.
-    pub fn edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
-        if !self.is_exist(id) {
-            return Err(EntityNotFoundError(*id));
-        }
-
-        let me = Pointee::EntityId(*id);
-        let edges = self
-            .edges
-            .iter()
-            .filter_map(|(edge_id, (source, target))| {
-                (source == &me || target == &me).then_some(*edge_id)
-            })
-            .collect();
-        Ok(edges)
-    }
-
     /// Get obj by entity id from the whole graph,
     /// returns None if field doesn't exist
     pub fn obj(&self, id: &EntityId) -> Option<&Object> {
@@ -442,35 +418,6 @@ impl Graph {
         result
     }
     
-    /// Edges going *out* of `id` — those with `source == id`. The
-    /// directional split of [`Graph::edges`].
-    pub fn out_edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
-        if !self.is_exist(id) {
-            return Err(EntityNotFoundError(*id));
-        }
-        let me = Pointee::EntityId(*id);
-        Ok(self
-            .edges
-            .iter()
-            .filter_map(|(eid, (s, _))| (s == &me).then_some(*eid))
-            .collect())
-    }
-
-    /// Edges coming *in* to `id` — those with `target == id`. The
-    /// directional split of [`Graph::edges`].
-    pub fn in_edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
-        if !self.is_exist(id) {
-            return Err(EntityNotFoundError(*id));
-        }
-        let me = Pointee::EntityId(*id);
-        Ok(self
-            .edges
-            .iter()
-            .filter_map(|(eid, (_, t))| (t == &me).then_some(*eid))
-            .collect())
-    }
-
-
     /// Get a triplet by id.
     ///
     /// # Errors
@@ -1299,25 +1246,6 @@ mod tests {
     mod test_getters {
         use super::*;
 
-        mod test_edges {
-            use super::*;
-
-            /// Test all kind of edges
-            #[test]
-            fn test_get_edges_1() {
-                let (graph, n1, _n2, _n3, _n4, e_a, _e_b, meta_edge, edge_to_h, _h) =
-                    test_utils::create_semple_graph2();
-
-                // n1 is endpoint of three edges:
-                //   e_a       (n1 ↔ n2)        — edge to a node
-                //   meta_edge (n1 ↔ e_b)       — edge to an edge
-                //   edge_to_h (n1 ↔ h)         — edge to a hyperedge
-                let edges: HashSet<_> = graph.edges(&n1).unwrap().into_iter().collect();
-                let expected: HashSet<_> = [e_a, meta_edge, edge_to_h].into_iter().collect();
-                assert_eq!(edges, expected);
-            }
-        }
-
         mod test_obj {
             use super::*;
 
@@ -1390,46 +1318,6 @@ mod tests {
 
                 assert_eq!(result_nodes, [n1, n2].into_iter().collect());
                 assert_eq!(result_edges, [e1].into_iter().collect());
-            }
-        }
-
-        // The next two tests use `create_semple_graph3` and exercise
-        // the directional split of `edges`. The reversed
-        // `e2 = (n3 → n1)` is what makes them informative.
-
-        mod test_out_edges {
-            use super::*;
-
-            #[test]
-            fn out_edges() {
-                let (graph, n1, n2, n3, e1, e2, e3, e4) =
-                    test_utils::create_semple_graph3();
-
-                let from_n1: HashSet<_> = graph.out_edges(&n1).unwrap().into_iter().collect();
-                let from_n2: HashSet<_> = graph.out_edges(&n2).unwrap().into_iter().collect();
-                let from_n3: HashSet<_> = graph.out_edges(&n3).unwrap().into_iter().collect();
-
-                assert_eq!(from_n1, [e1].into_iter().collect());
-                assert_eq!(from_n2, HashSet::new());
-                assert_eq!(from_n3, [e2, e3, e4].into_iter().collect());
-            }
-        }
-
-        mod test_in_edges {
-            use super::*;
-
-            #[test]
-            fn in_edges() {
-                let (graph, n1, n2, n3, e1, e2, e3, e4) =
-                    test_utils::create_semple_graph3();
-
-                let into_n1: HashSet<_> = graph.in_edges(&n1).unwrap().into_iter().collect();
-                let into_n2: HashSet<_> = graph.in_edges(&n2).unwrap().into_iter().collect();
-                let into_n3: HashSet<_> = graph.in_edges(&n3).unwrap().into_iter().collect();
-
-                assert_eq!(into_n1, [e2].into_iter().collect());
-                assert_eq!(into_n2, [e1, e3, e4].into_iter().collect());
-                assert_eq!(into_n3, HashSet::new());
             }
         }
 
