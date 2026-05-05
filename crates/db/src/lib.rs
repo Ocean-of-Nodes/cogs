@@ -1,4 +1,5 @@
 mod methods;
+mod neighborhood;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -211,121 +212,6 @@ impl Graph {
     // ------------ END ROOTS ------------------- //
 
     /* ------------ START GETTERS ------------------- */
-
-    /// Returns the entities directly connected to `id` — that is,
-    /// for every edge incident to `id`, the **other** endpoint.
-    ///
-    /// The edges themselves are **not** part of the result. They are
-    /// the *paths* along which neighbours are reached, not the
-    /// destinations. To retrieve the incident edges, use
-    /// [`Graph::edges`].
-    ///
-    /// ```text
-    ///   neighbours(n1) = [n2, n3]
-    ///
-    ///        n2 ----(e1)---- n1 ----(e2)---- n3
-    ///        ^                ^                ^
-    ///        |                |                |
-    ///     returned         queried          returned
-    ///
-    ///        (e1) and (e2) are NOT in the result —
-    ///        they are the connections, not the neighbours.
-    /// ```
-    ///
-    /// `id` may itself be an edge. In that case the result contains
-    /// entities reached via *incident meta-edges*, but never the
-    /// `source` / `target` of the edge `id` itself:
-    ///
-    /// ```text
-    ///   n1 ----(e1)---- n2
-    ///           |
-    ///          (e3)         e3 is a meta-edge with
-    ///           |           endpoints e1 and e2.
-    ///   n3 ----(e2)---- n4
-    /// ```
-    ///
-    /// `neighbours(e1) = [e2]` — `e3` is incident to `e1`, and its
-    /// *other* endpoint is `e2`. `n1` and `n2` are **not** in the
-    /// result: they are `e1`'s own endpoints, not entities reached
-    /// *via* another edge incident to `e1`.
-    ///
-    /// # Hyperedges
-    ///
-    /// A hyperedge containing `id` contributes its **other members**
-    /// to the result — the same "skip the edge itself, take what's
-    /// on the other side" rule, generalised from two endpoints to
-    /// many.
-    ///
-    /// ```text
-    ///   n1 ----(e1)---- n2
-    ///
-    ///   h = {n1, n3, n4}
-    /// ```
-    ///
-    /// `neighbours(n1) = [n2, n3, n4]` — `n2` via `e1`, `n3` and
-    /// `n4` via membership in `h`. `h` itself is not in the result
-    /// (same as `e1` isn't): hyperedges are connectors, not
-    /// destinations.
-    ///
-    /// Querying `id == h` returns the entities reached via edges
-    /// incident to `h` (e.g. an edge with `h` as endpoint), **not**
-    /// `h`'s members — same treatment as edges' own `source`/`target`.
-    ///
-    /// # Deduplication
-    ///
-    /// Each neighbour appears in the result **at most once**, even
-    /// when there are multiple ways to reach it. Parallel edges and
-    /// edge-plus-hyperedge combinations all collapse to a single
-    /// entry:
-    ///
-    /// ```text
-    ///   n1 ----(e1)---- n2
-    ///   n1 ----(e2)---- n2     ← parallel edge
-    ///
-    ///   h = {n1, n2}           ← and a hyperedge containing both
-    /// ```
-    ///
-    /// `neighbours(n1) = [n2]` — three different relations point at
-    /// `n2`, but it shows up exactly once. The order of elements is
-    /// unspecified.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EntityNotFoundError`] if `id` does not exist
-    /// anywhere in this graph or its subgraphs.
-    pub fn neighbours(&self, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
-        if !self.is_exist(id) {
-            return Err(EntityNotFoundError(*id));
-        }
-
-        let mut neighbours: HashSet<Pointee> = HashSet::new();
-        let me = Pointee::EntityId(*id);
-
-        // Edges incident to `id` — insert the other endpoint. Match
-        // is on `Pointee::EntityId(*id)` exactly: an edge whose
-        // endpoint is `Pointee::Path { entity: *id, .. }` is *not*
-        // incident to `id` itself, only to that subobject.
-        for (source, target) in self.edges.values() {
-            if source == &me {
-                neighbours.insert(target.clone());
-            } else if target == &me {
-                neighbours.insert(source.clone());
-            }
-        }
-
-        // Hyperedges containing `id` — insert the other members.
-        for members in self.hyper_edge.values() {
-            if members.contains(&me) {
-                for m in members {
-                    if m != &me {
-                        neighbours.insert(m.clone());
-                    }
-                }
-            }
-        }
-
-        Ok(neighbours.into_iter().collect())
-    }
 
     /// Get all edges incident to `id` — every edge that has
     /// `Pointee::EntityId(id)` as its `source` or `target`.
@@ -556,46 +442,6 @@ impl Graph {
         result
     }
     
-    /// Endpoints reachable through outgoing edges from `id` — for
-    /// every edge with `source == id`, the `target`.
-    ///
-    /// The directional split of [`Graph::neighbours`]. Hyperedges are
-    /// undirected and are **not** included here; use
-    /// [`Graph::neighbours`] for the kind-agnostic, direction-agnostic
-    /// view.
-    pub fn out_neighbours(&self, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
-        if !self.is_exist(id) {
-            return Err(EntityNotFoundError(*id));
-        }
-        let me = Pointee::EntityId(*id);
-        let mut out: HashSet<Pointee> = HashSet::new();
-        for (s, t) in self.edges.values() {
-            if s == &me {
-                out.insert(t.clone());
-            }
-        }
-        Ok(out.into_iter().collect())
-    }
-
-    /// Endpoints from which incoming edges arrive at `id` — for
-    /// every edge with `target == id`, the `source`.
-    ///
-    /// The directional split of [`Graph::neighbours`]. Hyperedges are
-    /// undirected and are **not** included here.
-    pub fn in_neighbours(&self, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
-        if !self.is_exist(id) {
-            return Err(EntityNotFoundError(*id));
-        }
-        let me = Pointee::EntityId(*id);
-        let mut inc: HashSet<Pointee> = HashSet::new();
-        for (s, t) in self.edges.values() {
-            if t == &me {
-                inc.insert(s.clone());
-            }
-        }
-        Ok(inc.into_iter().collect())
-    }
-
     /// Edges going *out* of `id` — those with `source == id`. The
     /// directional split of [`Graph::edges`].
     pub fn out_edges(&self, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
@@ -650,6 +496,12 @@ impl Graph {
                 actual_type: ty.to_string(),
             })),
         }
+    }
+
+    /// Direct lookup of a hyperedge's members. `None` if `id` is
+    /// not a hyperedge. Companion to [`Graph::edge`].
+    pub fn hyperedge_members(&self, id: &HyperEdgeId) -> Option<&Vec<Pointee>> {
+        self.hyper_edge.get(id)
     }
 
     /* ------------ END GETTERS -------------------- */
@@ -1103,7 +955,7 @@ impl Graph {
 mod tests {
     use super::*;
 
-    mod test_utils {
+    pub(crate) mod test_utils {
         use super::*;
 
         pub fn create_simple_obj(field_name: &str) -> Object {
@@ -1447,127 +1299,6 @@ mod tests {
     mod test_getters {
         use super::*;
 
-        mod test_neighbours {
-            use super::*;
-
-            /// A simple case
-            #[test]
-            fn test_neighbours1() {
-                // Built graph:
-                // ```text
-                //  node1 --(edge)--> node2
-                //   ^
-                //   |
-                // (edge2)
-                //   |
-                //  node3
-                // ```
-                let mut graph = Graph::default();
-
-                let field1 = test_utils::create_simple_obj("filed1");
-                let field2 = test_utils::create_simple_obj("filed2");
-                let field3 = test_utils::create_simple_obj("filed3");
-                let node_id1 = graph.add_node(field1);
-                let node_id2 = graph.add_node(field2);
-                let node_id3 = graph.add_node(field3);
-                graph.add_edge(node_id1, node_id2).unwrap();
-                graph.add_edge(node_id3, node_id1).unwrap();
-
-                let neighbours = graph.neighbours(&node_id1).unwrap();
-                assert_eq!(neighbours.len(), 2);
-                assert!(neighbours.contains(&Pointee::EntityId(node_id2)));
-                assert!(neighbours.contains(&Pointee::EntityId(node_id3)));
-            }
-
-            /// A more complex case with edge beetween edges
-            /// Test that get_neighbours will return only nodes,
-            /// but not edges, even if edge is beetween two edges
-            #[test]
-            fn test_neighbours2() {
-                // Built graph:
-                // ```text
-                //  node1 --(edge1)--> node2
-                //            |
-                //          (edge3) < -- (edge4) -- node5
-                //            |
-                //            v
-                //  node3 --(edge2)--> node4
-                // ```
-                let mut graph = Graph::default();
-
-                let field1 = test_utils::create_simple_obj("node1");
-                let field2 = test_utils::create_simple_obj("node2");
-                let node_id1 = graph.add_node(field1);
-                let node_id2 = graph.add_node(field2);
-                let edge1 = graph.add_edge(node_id1, node_id2).unwrap();
-
-                let field3 = test_utils::create_simple_obj("node3");
-                let field4 = test_utils::create_simple_obj("node4");
-                let node_id3 = graph.add_node(field3);
-                let node_id4 = graph.add_node(field4);
-                let edge2 = graph.add_edge(node_id3, node_id4).unwrap();
-
-                let edge3 = graph.add_edge(edge1, edge2).unwrap();
-
-                let field5 = test_utils::create_simple_obj("node5");
-                let node_id5 = graph.add_node(field5);
-                let edge4 = graph.add_edge(node_id5, edge3).unwrap();
-
-                let neighbours = graph.neighbours(&edge3).unwrap();
-                assert_eq!(neighbours.len(), 1);
-                assert!(neighbours.contains(&Pointee::EntityId(node_id5)));
-            }
-
-            /// Test node connected to node\edge\hyperedge
-            #[test]
-            fn test_neighbours3() {
-                let (graph, n1, n2, _, _, e_a, e_b, _, _, h) = test_utils::create_semple_graph2();
-                let neighbours: HashSet<_> = graph.neighbours(&n1).unwrap().into_iter().collect();
-
-                let expected: HashSet<_> = [
-                    Pointee::EntityId(n2),
-                    Pointee::EntityId(e_b),
-                    Pointee::EntityId(h),
-                ]
-                .into_iter()
-                .collect();
-                assert_eq!(neighbours, expected);
-
-                // Sanity: the bridging edge `e_a` itself is a path,
-                // not a destination, so it must not appear.
-                assert!(!neighbours.contains(&Pointee::EntityId(e_a)));
-            }
-
-            /// `id` must not appear in its own neighbours list when
-            /// it is a member of a hyperedge that includes it.
-            /// Guards specifically against a regression where the
-            /// iteration over hyperedge members forgets the
-            /// `m != id` skip.
-            #[test]
-            fn test_neighbours4() {
-                // Built graph:
-                // ```text
-                //   h = {n1, n2}
-                // ```
-                let mut graph = Graph::default();
-                let obj = test_utils::create_simple_obj("test_field");
-
-                let n1 = graph.add_node(obj.clone());
-                let n2 = graph.add_node(obj.clone());
-
-                let _h = graph.create_hyperedge(vec![n1.into(), n2.into()]);
-
-                let neighbours: HashSet<_> = graph.neighbours(&n1).unwrap().into_iter().collect();
-
-                assert!(
-                    !neighbours.contains(&Pointee::EntityId(n1)),
-                    "n1 must not be listed as its own neighbour"
-                );
-                let expected: HashSet<_> = [Pointee::EntityId(n2)].into_iter().collect();
-                assert_eq!(neighbours, expected);
-            }
-        }
-
         mod test_edges {
             use super::*;
 
@@ -1662,62 +1393,8 @@ mod tests {
             }
         }
 
-        mod test_out_neighbours {
-            use super::*;
-
-            #[test]
-            fn out_neighbours() {
-                let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) =
-                    test_utils::create_semple_graph3();
-
-                let from_n1: HashSet<_> =
-                    graph.out_neighbours(&n1).unwrap().into_iter().collect();
-                let from_n2: HashSet<_> =
-                    graph.out_neighbours(&n2).unwrap().into_iter().collect();
-                let from_n3: HashSet<_> =
-                    graph.out_neighbours(&n3).unwrap().into_iter().collect();
-
-                // n1 → n2 only.
-                assert_eq!(from_n1, [Pointee::from(n2)].into_iter().collect());
-                // n2 has no outgoing.
-                assert_eq!(from_n2, HashSet::new());
-                // n3 → n1 (via e2), n3 → n2 (via e3 and e4 — dedupes).
-                assert_eq!(
-                    from_n3,
-                    [Pointee::from(n1), Pointee::from(n2)].into_iter().collect()
-                );
-            }
-        }
-
-        mod test_in_neighbours {
-            use super::*;
-
-            #[test]
-            fn in_neighbours() {
-                let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) =
-                    test_utils::create_semple_graph3();
-
-                let into_n1: HashSet<_> =
-                    graph.in_neighbours(&n1).unwrap().into_iter().collect();
-                let into_n2: HashSet<_> =
-                    graph.in_neighbours(&n2).unwrap().into_iter().collect();
-                let into_n3: HashSet<_> =
-                    graph.in_neighbours(&n3).unwrap().into_iter().collect();
-
-                // n3 → n1.
-                assert_eq!(into_n1, [Pointee::from(n3)].into_iter().collect());
-                // n1 → n2 (via e1), n3 → n2 (via e3 and e4 — dedupes).
-                assert_eq!(
-                    into_n2,
-                    [Pointee::from(n1), Pointee::from(n3)].into_iter().collect()
-                );
-                // n3 has no incoming.
-                assert_eq!(into_n3, HashSet::new());
-            }
-        }
-
-        // The next four tests use `create_semple_graph3` and exercise
-        // the directional split of `neighbours` / `edges`. The reversed
+        // The next two tests use `create_semple_graph3` and exercise
+        // the directional split of `edges`. The reversed
         // `e2 = (n3 → n1)` is what makes them informative.
 
         mod test_out_edges {
