@@ -1,6 +1,7 @@
 mod incidence;
 mod methods;
 mod paths;
+mod hyperedge;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -11,6 +12,8 @@ use common::*;
 /// Listener is a function that will be called when graph be changed
 type ListernerID = Uuid;
 
+#[derive(Debug)]
+struct HyperEdgeNotFound(HyperEdgeId);
 #[derive(Debug)]
 struct EntityNotFoundError(EntityId);
 #[derive(Debug)]
@@ -167,7 +170,7 @@ struct Graph {
     edges: HashMap<EdgeID, (Pointee, Pointee)>,
 
     /// Hold hyperedges
-    hyper_edge: HashMap<HyperEdgeId, Vec<Pointee>>,
+    hyper_edge: HashMap<HyperEdgeId, HashSet<Pointee>>,
 }
 
 impl Graph {
@@ -262,7 +265,7 @@ impl Graph {
 
     /// Direct lookup of a hyperedge's members. `None` if `id` is
     /// not a hyperedge. Companion to [`Graph::edge`].
-    pub fn hyperedge_members(&self, id: &HyperEdgeId) -> Option<&Vec<Pointee>> {
+    pub fn hyperedge_members(&self, id: &HyperEdgeId) -> Option<&HashSet<Pointee>> {
         self.hyper_edge.get(id)
     }
 
@@ -390,13 +393,13 @@ impl Graph {
 
     /* ------------ START CONSTRUCTORS ----------- */
     
-    fn create_hyperedge(&mut self, members: Vec<Pointee>) -> HyperEdgeId {
+    fn create_hyperedge(&mut self, members: HashSet<Pointee>) -> HyperEdgeId {
         let id = Uuid::new_v4();
         self.hyper_edge.insert(id, members);
         id
     }
 
-    fn __create_hyperedge_with_id(&mut self, id: HyperEdgeId, members: Vec<Pointee>) {
+    fn __create_hyperedge_with_id(&mut self, id: HyperEdgeId, members: HashSet<Pointee>) {
         self.hyper_edge.insert(id, members);
     }
 
@@ -491,22 +494,18 @@ impl Graph {
             .remove(id)
             .ok_or_else(|| NodeNotFoundError(*id))
     }
-
+    */
     pub fn remove_edge(&mut self, id: &Uuid) -> Result<Triplet, EdgeNotFoundError> {
-        self.edges
-            .iter()
-            .position(|triplet| &triplet.id == id)
-            .map(|index| self.edges.remove(index))
-            .ok_or_else(|| EdgeNotFoundError(*id))
+        todo!()
     }
-
-    pub fn remove_hyperedge() {
+    
+    pub fn remove_hyperedge(&mut self, target: &HyperEdgeId) -> Option<HyperEdgeNotFound> {
+        todo!()
     }
 
     /* ------------ END DESTRUCTORS ------------- */
 
     /* ------------ START MODIFIERS ----------- */
-    */
 
     fn attach_obj(&mut self, target: AttachTargetID, obj: Object) -> Result<(), AttachNodeError> {
         let ty = match self.get_type(target) {
@@ -662,7 +661,11 @@ mod tests {
             let e3 = g.add_edge(e1, e2).unwrap();
             let e4 = g.add_edge(e3, n2).unwrap();
 
-            let h = g.create_hyperedge(vec![n1.into(), n3.into()]);
+            let mut m = HashSet::new();
+            m.insert(n1.into());
+            m.insert(n3.into());
+
+            let h = g.create_hyperedge(m);
             let e5 = g.add_edge(h, e4).unwrap();
 
             (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h)
@@ -706,7 +709,11 @@ mod tests {
             let e_b = graph.add_edge(n3, n4).unwrap();
             let meta_edge = graph.add_edge(n1, e_b).unwrap();
 
-            let h = graph.create_hyperedge(vec![n3.into(), n4.into()]);
+            let mut m  = HashSet::new();
+            m.insert(n3.into());
+            m.insert(n4.into());
+
+            let h = graph.create_hyperedge(m);
             let edge_to_h = graph.add_edge(n1, h).unwrap();
 
             (graph, n1, n2, n3, n4, e_a, e_b, meta_edge, edge_to_h, h)
@@ -824,7 +831,11 @@ mod tests {
                 let e1 = g.add_edge(n1, n2).unwrap();
                 g.attach_obj(e1, obj.clone()).unwrap();
 
-                let h = g.create_hyperedge(vec![n1.into(), n2.into()]);
+                let mut m  = HashSet::new();
+                m.insert(n1.into());
+                m.insert(n2.into());
+
+                let h = g.create_hyperedge(m);
                 g.attach_obj(h, obj.clone()).unwrap();
 
                 let actual: Vec<_> = g.iter_entities().collect();

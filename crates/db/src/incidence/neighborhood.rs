@@ -201,7 +201,11 @@ mod tests {
         let n1 = graph.add_node(obj.clone());
         let n2 = graph.add_node(obj.clone());
 
-        let _h = graph.create_hyperedge(vec![n1.into(), n2.into()]);
+        let mut m  = HashSet::new();
+        m.insert(n1.into());
+        m.insert(n2.into());
+
+        let _h = graph.create_hyperedge(m);
 
         let neighbours: HashSet<_> = neighbours(&graph, &n1).unwrap().into_iter().collect();
 

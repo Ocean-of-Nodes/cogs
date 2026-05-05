@@ -1,7 +1,7 @@
 pub mod path;
 pub mod local_path;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
@@ -129,18 +129,18 @@ pub enum Patch {
     // ------------- START HYPER EDGE --------------
     CreateHyperEdge {
         id: HyperEdgeId,
-        members: Vec<Pointee>,
+        members: HashSet<Pointee>,
     },
     RemoveHyperEdge {
         id: HyperEdgeId,
     },
     AddElementsToHyperEdge {
         id: HyperEdgeId,
-        members: Vec<Pointee>,
+        members: HashSet<Pointee>,
     },
     RemoveElementsFromHyperEdge {
         id: HyperEdgeId,
-        members: Vec<Pointee>,
+        members: HashSet<Pointee>,
     },
     MergeHyperEdge {
         lhs: HyperEdgeId,
