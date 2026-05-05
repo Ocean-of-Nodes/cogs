@@ -633,7 +633,7 @@ impl Graph {
     ///   in the graph.
     /// - [`GetEdgeError::IncorrectType`] — `id` exists, but it's a
     ///   different kind of entity (Node, HyperEdge, AttachedObject).
-    pub fn get_edge(&self, id: &EdgeID) -> Result<Triplet, GetEdgeError> {
+    pub fn edge(&self, id: &EdgeID) -> Result<Triplet, GetEdgeError> {
         if let Some(pair) = self.edges.get(id) {
             return Ok(Triplet {
                 id: *id,
@@ -730,19 +730,6 @@ impl Graph {
         }
     }
 
-    /*
-    /// Check if id is edge from the whole graph,
-    /// returns true if edge exists, false otherwise
-    pub fn is_edge(&self, id: &EntityId) -> bool {
-        self.global_edges().any(|edge_id| &edge_id == id)
-    }
-
-    /// Check if id is node from the whole graph,
-    /// returns true if node exists, false otherwise
-    pub fn is_node(&self, id: &EntityId) -> bool {
-        self.global_nodes().any(|node_id| &node_id == id)
-    }
-    */
     /// Check if id is node or edge from the whole graph,
     /// returns true if node or edge exists, false otherwise
     pub fn is_exist(&self, id: &EntityId) -> bool {
@@ -895,11 +882,11 @@ impl Graph {
     ///   n5 --(e4)--> n6 --(e6)--> n7
     /// ```
     ///
-    /// - `is_linked(e1, e4)` → `Ok(true)`  — via `e1 — e3 — e2 — e5 — e4`
+    /// - `reachable(e1, e4)` → `Ok(true)`  — via `e1 — e3 — e2 — e5 — e4`
     ///   (same route as `is_existing_path`).
-    /// - `is_linked(n5, n7)` → `Ok(true)`  — via `n5 — e4 — n6 — e6 — n7`
+    /// - `reachable(n5, n7)` → `Ok(true)`  — via `n5 — e4 — n6 — e6 — n7`
     ///   (same route as `is_existing_path`).
-    /// - `is_linked(e1, n6)` → `Ok(true)`  — via
+    /// - `reachable(e1, n6)` → `Ok(true)`  — via
     ///   `e1 — e3 — e2 — e5 — e4 — n6`. The same query is `Ok(false)`
     ///   for [`Graph::is_existing_path`], which forbids crossing
     ///   between an edge and a node.
@@ -908,7 +895,7 @@ impl Graph {
     ///
     /// Returns [`MissingEndpointsError`] if `source` or `target` does
     /// not exist anywhere in this graph or its subgraphs.
-    pub fn is_linked(
+    pub fn reachable(
         &self,
         source: &EntityId,
         target: &EntityId,
@@ -917,45 +904,11 @@ impl Graph {
 
         unimplemented!()
     }
-
+    */
     /* ------------ END PROBS -------------------- */
 
     /* ------------ START CONSTRUCTORS ----------- */
-
-    /// Walks the parent path (all components except the last);
-    /// the last component is the name under which `graph` will
-    /// be inserted in that parent.
-    fn add_subgraph(
-        &mut self,
-        name: &PathBuf,
-        mut graph: Graph,
-    ) -> Result<(), UnexistentPathError> {
-        let mut components = name.iter();
-        let subgraph_name = components
-            .next_back()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-
-        let mut current_graph = self;
-        let mut current_path = PathBuf::new();
-        for chank in components {
-            let key = chank.to_str().unwrap();
-            if let Some(subgraph) = current_graph.subgraphs.get_mut(key) {
-                current_graph = subgraph;
-                current_path.push(chank);
-            } else {
-                return Err(UnexistentPathError {
-                    valid_path_part: current_path,
-                });
-            }
-        }
-        graph.path = name.to_path_buf();
-        current_graph.subgraphs.insert(subgraph_name, graph);
-        Ok(())
-    }
-    */
+    
     fn create_hyperedge(&mut self, members: Vec<Pointee>) -> HyperEdgeId {
         let id = Uuid::new_v4();
         self.hyper_edge.insert(id, members);
@@ -1709,46 +1662,6 @@ mod tests {
             }
         }
 
-        // The next four tests use `create_semple_graph3` and exercise
-        // the directional split of `neighbours` / `edges`. The reversed
-        // `e2 = (n3 → n1)` is what makes them informative.
-
-        mod test_out_edges {
-            use super::*;
-
-            #[test]
-            fn out_edges() {
-                let (graph, n1, n2, n3, e1, e2, e3, e4) =
-                    test_utils::create_semple_graph3();
-
-                let from_n1: HashSet<_> = graph.out_edges(&n1).unwrap().into_iter().collect();
-                let from_n2: HashSet<_> = graph.out_edges(&n2).unwrap().into_iter().collect();
-                let from_n3: HashSet<_> = graph.out_edges(&n3).unwrap().into_iter().collect();
-
-                assert_eq!(from_n1, [e1].into_iter().collect());
-                assert_eq!(from_n2, HashSet::new());
-                assert_eq!(from_n3, [e2, e3, e4].into_iter().collect());
-            }
-        }
-
-        mod test_in_edges {
-            use super::*;
-
-            #[test]
-            fn in_edges() {
-                let (graph, n1, n2, n3, e1, e2, e3, e4) =
-                    test_utils::create_semple_graph3();
-
-                let into_n1: HashSet<_> = graph.in_edges(&n1).unwrap().into_iter().collect();
-                let into_n2: HashSet<_> = graph.in_edges(&n2).unwrap().into_iter().collect();
-                let into_n3: HashSet<_> = graph.in_edges(&n3).unwrap().into_iter().collect();
-
-                assert_eq!(into_n1, [e2].into_iter().collect());
-                assert_eq!(into_n2, [e1, e3, e4].into_iter().collect());
-                assert_eq!(into_n3, HashSet::new());
-            }
-        }
-
         mod test_out_neighbours {
             use super::*;
 
@@ -1801,6 +1714,84 @@ mod tests {
                 // n3 has no incoming.
                 assert_eq!(into_n3, HashSet::new());
             }
+        }
+
+        // The next four tests use `create_semple_graph3` and exercise
+        // the directional split of `neighbours` / `edges`. The reversed
+        // `e2 = (n3 → n1)` is what makes them informative.
+
+        mod test_out_edges {
+            use super::*;
+
+            #[test]
+            fn out_edges() {
+                let (graph, n1, n2, n3, e1, e2, e3, e4) =
+                    test_utils::create_semple_graph3();
+
+                let from_n1: HashSet<_> = graph.out_edges(&n1).unwrap().into_iter().collect();
+                let from_n2: HashSet<_> = graph.out_edges(&n2).unwrap().into_iter().collect();
+                let from_n3: HashSet<_> = graph.out_edges(&n3).unwrap().into_iter().collect();
+
+                assert_eq!(from_n1, [e1].into_iter().collect());
+                assert_eq!(from_n2, HashSet::new());
+                assert_eq!(from_n3, [e2, e3, e4].into_iter().collect());
+            }
+        }
+
+        mod test_in_edges {
+            use super::*;
+
+            #[test]
+            fn in_edges() {
+                let (graph, n1, n2, n3, e1, e2, e3, e4) =
+                    test_utils::create_semple_graph3();
+
+                let into_n1: HashSet<_> = graph.in_edges(&n1).unwrap().into_iter().collect();
+                let into_n2: HashSet<_> = graph.in_edges(&n2).unwrap().into_iter().collect();
+                let into_n3: HashSet<_> = graph.in_edges(&n3).unwrap().into_iter().collect();
+
+                assert_eq!(into_n1, [e2].into_iter().collect());
+                assert_eq!(into_n2, [e1, e3, e4].into_iter().collect());
+                assert_eq!(into_n3, HashSet::new());
+            }
+        }
+
+        mod test_edge {
+            use super::*;
+
+            #[test]
+            fn edge() {
+
+            }
+
+             // TODO: test_get_edges in different subgraphs
+             /* 
+                #[test]
+                fn test_get_edge_beetween_subgraph_and_parent() {
+                    let mut graph = Graph::default();
+                    let graph2 = Graph::default();
+                    let path = PathBuf::from("subgraph");
+                    graph.add_subgraph(&path, graph2).unwrap();
+
+                    let field1 = Field::String("node1".to_string());
+                    let field2 = Field::String("node2".to_string());
+                    let node_id1 = graph.add_node(field1).unwrap();
+                    let node_id2 = graph.subgraph(&path).unwrap().add_node(field2).unwrap();
+
+                    let edge_id = graph.add_edge(node_id1, node_id2).unwrap();
+                    assert!(graph.get_edge(&edge_id).is_some());
+                }
+
+                #[test]
+                fn test_get_edge_beetween_subgraphs_at_same_lvl() {
+                    unimplemented!()
+                }
+
+                #[test]
+                fn test_get_edge_beetween_subgraphs_at_different_lvl() {
+                    unimplemented!()
+                }
+             */
         }
     }
 
@@ -1873,7 +1864,7 @@ mod tests {
 
                 let e1 = g.add_edge(n1, n2).unwrap();
                 assert_eq!(
-                    g.get_edge(&e1).unwrap(),
+                    g.edge(&e1).unwrap(),
                     Triplet {
                         id: e1,
                         source: Pointee::EntityId(n1),
@@ -1891,7 +1882,7 @@ mod tests {
 
                 let e1 = g.add_edge(n1, n1).unwrap();
                 assert_eq!(
-                    g.get_edge(&e1).unwrap(),
+                    g.edge(&e1).unwrap(),
                     Triplet {
                         id: e1,
                         source: Pointee::EntityId(n1),
@@ -1934,8 +1925,6 @@ mod tests {
     mod test_constructors_and_getters {
         use super::*;
 
-        // TODO: test_get_edges in different subgraphs
-
         #[test]
         fn test_add_edge() {
             let mut graph = Graph::default();
@@ -1975,28 +1964,7 @@ mod tests {
                 .add_node(field.clone())
                 .unwrap();
             assert_eq!(graph.subgraph(&path).unwrap().field(&node_id), Some(&field));
-        }
-
-        #[test]
-        fn test_get_edge_beetween_subgraph_and_parent() {
-            let mut graph = Graph::default();
-            let graph2 = Graph::default();
-            let path = PathBuf::from("subgraph");
-            graph.add_subgraph(&path, graph2).unwrap();
-
-            let field1 = Field::String("node1".to_string());
-            let field2 = Field::String("node2".to_string());
-            let node_id1 = graph.add_node(field1).unwrap();
-            let node_id2 = graph.subgraph(&path).unwrap().add_node(field2).unwrap();
-
-            let edge_id = graph.add_edge(node_id1, node_id2).unwrap();
-            assert!(graph.get_edge(&edge_id).is_some());
-        }
-
-        #[test]
-        fn test_get_edge_beetween_subgraphs_at_same_lvl() {
-            unimplemented!()
-        }
+        } 
 
         #[test]
         fn test_get_node_of_edge_beetween_subgraphs_at_different_lvl() {
@@ -2010,11 +1978,6 @@ mod tests {
 
         #[test]
         fn test_get_node_of_edge_beetween_subgraphs_at_same_lvl() {
-            unimplemented!()
-        }
-
-        #[test]
-        fn test_get_edge_beetween_subgraphs_at_different_lvl() {
             unimplemented!()
         }
     }
