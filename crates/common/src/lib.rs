@@ -148,7 +148,3 @@ pub enum Patch {
     },
     // ------------- END HYPER EDGE --------------
 }
-
-pub fn is_delta_order_valid(delta: &Vec<Patch>) -> bool {
-    todo!()
-}

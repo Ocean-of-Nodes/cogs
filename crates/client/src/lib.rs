@@ -26,8 +26,6 @@ pub struct ImmutableGraph {
 
 impl ImmutableGraph {
     pub fn new(snapshot: Vec<Patch>) -> Self {
-        debug_assert!(is_delta_order_valid(&snapshot));
-
         let mut g = Self::default();
         g.apply_delta(snapshot);
         g
