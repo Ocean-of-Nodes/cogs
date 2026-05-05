@@ -70,7 +70,7 @@ pub enum ObjectDelta {
     RemoveField {
         name: String,
     },
-    ReplaceField {
+    UpsertField {
         name: String,
         field: Field,
     },
@@ -107,7 +107,7 @@ pub enum Patch {
         id: NodeId,
         delta: Vec<ObjectDelta>,
     },
-    ReplaceNode {
+    UpsertNode {
         id: NodeId,
          obj: Object,
     },
@@ -127,7 +127,7 @@ pub enum Patch {
         id: EdgeID,
         new_target: RetrargetEdge,
     },
-    ReplaceEdgeData {
+    UpsertEdgeData {
         id: EdgeID,
         obj: Object,
     },
@@ -158,7 +158,7 @@ pub enum Patch {
         id: HyperEdgeId,
         members: HashSet<Pointee>,
     },
-    ReplaceHyperEdgeData {
+    UpsertHyperEdgeData {
         id: HyperEdgeId,
         obj: Object,
     },

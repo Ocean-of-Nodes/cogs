@@ -495,16 +495,14 @@ impl Graph {
             _ => Err(ApplyPatchError::NotImplemented),
         }
     }
-    /*
+    
     /* ------------ END CONSTRUCTORS ------------- */
 
     /* ------------ START DESTRUCTORS ----------- */
     pub fn remove_node(&mut self, id: &Uuid) -> Result<Field, NodeNotFoundError> {
-        self.entities
-            .remove(id)
-            .ok_or_else(|| NodeNotFoundError(*id))
+        todo!()
     }
-    */
+    
     pub fn remove_edge(&mut self, id: &Uuid) -> Result<Triplet, EdgeNotFoundError> {
         todo!()
     }
@@ -538,13 +536,12 @@ impl Graph {
         Ok(())
     }
 
-    /*
     pub fn replace_node(&mut self, id: &Uuid, field: Field) -> Result<Field, NodeNotFoundError> {
-        unimplemented!()
+        todo!()
     }
 
-    pub fn replace_edge_data(&mut self, id: &Uuid, field: Field) -> Result<(), EdgeNotFoundError> {
-        unimplemented!()
+    pub fn replace_attach_obj(&mut self, id: &Uuid, field: Field) -> Result<(), EdgeNotFoundError> {
+        todo!()
     }
 
     pub fn retraget_edge(
@@ -552,72 +549,26 @@ impl Graph {
         id: &Uuid,
         new_target: RetrargetEdge,
     ) -> Result<(), RetargetError> {
-        unimplemented!()
+        todo!()
     }
 
-    pub fn apply_delta(&mut self, id: &Uuid, delta: Patch) -> Result<(), ApplyDeltaError> {
-        match delta {
-            Patch::AddNode { id, obj: field } => self
-                .__add_node_with_id(id, field)
-                .map_err(|e| ApplyDeltaError::NodeAlreadyExists(e)),
-            Patch::RemoveNode { id } => self
-                .remove_node(&id)
-                .map(|_| ())
-                .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id))),
-            Patch::ReplaceNode { id, field } => self
-                .replace_node(&id, field)
-                .map(|_| ())
-                .map_err(|_| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id))),
-            Patch::ChangeNode { id, delta } => {
-                // self.get_node(&id)
-                //     .ok_or_else(|| ApplyDeltaError::NodeNotFound(NodeNotFoundError(id)))
-                //     .and_then(|field| {
-                //         if let Field::Object(ref mut obj) = field {
-                //             // for change in delta {
-                //             //    unimplemented!()
-                //             // }
-                //             unimplemented!()
-                //         } else {
-                //             Err(ApplyDeltaError::FieldDoesntObject {
-                //                 node_id: id,
-                //                 actual_type: format!("{:?}", field),
-                //             })
-                //         }
-                //     })
-                unimplemented!()
-            }
-            Patch::AddEdge { id, source, target } => self
-                .__add_edge_with_id(id, source, target)
-                .map_err(|e| ApplyDeltaError::AddEdgeError(e)),
-            Patch::RemoveEdge { id } => self
-                .remove_edge(&id)
-                .map(|_| ())
-                .map_err(|_| ApplyDeltaError::EdgeNotFoundError(EdgeNotFoundError(id))),
-            Patch::RetrargetEdge { id, new_target } => self
-                .retraget_edge(&id, new_target)
-                .map_err(|e| ApplyDeltaError::RetargetError(e)),
-        }
-    }
     /* ------------ END MODIFIERS ------------- */
 
     /* ------------ START LISTENERS ----------- */
+    
     fn notify_listeners(&self, patch: Patch) {
-        for listener in self.listeners.values() {
-            listener(patch.clone());
-        }
+        todo!()
     }
 
     pub fn subscribe_on_change(&mut self, listener: Box<dyn Fn(Patch)>) -> ListernerID {
-        let id = Uuid::new_v4();
-        self.listeners.insert(id, listener);
-        id
+        todo!()
     }
 
     pub fn unsubscribe_on_change(&mut self, id: ListernerID) {
-        self.listeners.remove(&id);
+        todo!()
     }
+
     /* ------------ END LISTENERS ------------- */
-    */
 }
 
 #[cfg(test)]
