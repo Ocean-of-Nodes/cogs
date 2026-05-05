@@ -357,11 +357,203 @@ impl Graph {
         self.entities.get(id)
     }
 
-    /// Return all path from one node to another
-    /// 
-    /// The direction of the edges is not taken into account
+    /// Return all simple paths from `lhs` to `rhs` packed into a
+    /// single sub-graph. The direction of each edge is **ignored** —
+    /// every edge can be traversed both ways. The result is the
+    /// union of nodes and edges that lie on at least one such path,
+    /// with edges keeping their original `(source, target)`
+    /// orientation (we only relax direction during traversal, not in
+    /// the returned graph).
+    ///
+    /// "Simple" means each node is visited at most once on a single
+    /// path. Parallel edges between the same pair of nodes contribute
+    /// distinct paths and all show up in the result.
     pub fn undirected_paths(&mut self, lhs: NodeId, rhs: NodeId) -> Graph {
-        unimplemented!()
+        let mut result = Graph::default();
+
+        if lhs == rhs {
+            if let Some(obj) = self.entities.get(&lhs) {
+                result.entities.insert(lhs, obj.clone());
+            }
+            return result;
+        }
+
+        let lhs_p = Pointee::EntityId(lhs);
+        let rhs_p = Pointee::EntityId(rhs);
+
+        // Adjacency: each edge contributes BOTH directions so DFS
+        // can traverse against the original `source → target`.
+        let mut adj: HashMap<Pointee, Vec<(EdgeID, Pointee)>> = HashMap::new();
+        for (eid, (s, t)) in &self.edges {
+            adj.entry(s.clone()).or_default().push((*eid, t.clone()));
+            adj.entry(t.clone()).or_default().push((*eid, s.clone()));
+        }
+        let mut visited: HashSet<Pointee> = HashSet::from([lhs_p.clone()]);
+        // Stack only holds edge ids; original source/target are
+        // looked up in `self.edges` when a path is recorded, so the
+        // result preserves the real direction regardless of how DFS
+        // walked the edge.
+        let mut stack: Vec<EdgeID> = Vec::new();
+
+        fn dfs(
+            cur: &Pointee,
+            target: &Pointee,
+            adj: &HashMap<Pointee, Vec<(EdgeID, Pointee)>>,
+            edges_table: &HashMap<EdgeID, (Pointee, Pointee)>,
+            entities: &HashMap<EntityId, Object>,
+            visited: &mut HashSet<Pointee>,
+            stack: &mut Vec<EdgeID>,
+            result: &mut Graph,
+        ) {
+            let Some(outgoing) = adj.get(cur) else {
+                return;
+            };
+            for (eid, next) in outgoing {
+                if visited.contains(next) {
+                    continue;
+                }
+                stack.push(*eid);
+                if next == target {
+                    for path_eid in &*stack {
+                        if let Some((s, t)) = edges_table.get(path_eid) {
+                            result.edges.insert(*path_eid, (s.clone(), t.clone()));
+                            copy_entity_obj(s, entities, &mut result.entities);
+                            copy_entity_obj(t, entities, &mut result.entities);
+                        }
+                    }
+                } else {
+                    visited.insert(next.clone());
+                    dfs(next, target, adj, edges_table, entities, visited, stack, result);
+                    visited.remove(next);
+                }
+                stack.pop();
+            }
+        }
+
+        fn copy_entity_obj(
+            p: &Pointee,
+            src_entities: &HashMap<EntityId, Object>,
+            dst_entities: &mut HashMap<EntityId, Object>,
+        ) {
+            if let Pointee::EntityId(id) = p {
+                if let Some(obj) = src_entities.get(id) {
+                    dst_entities.insert(*id, obj.clone());
+                }
+            }
+        }
+
+        dfs(
+            &lhs_p,
+            &rhs_p,
+            &adj,
+            &self.edges,
+            &self.entities,
+            &mut visited,
+            &mut stack,
+            &mut result,
+        );
+
+        result
+    }
+
+    /// Return all simple directed paths from `lhs` to `rhs` packed
+    /// into a single sub-graph: the union of nodes and edges that
+    /// lie on at least one path. Edges shared by several paths
+    /// appear once. Direction is honoured (`source → target` only);
+    /// hyperedges are ignored.
+    ///
+    /// "Simple" means no node is visited twice on a single path —
+    /// cycles never blow up the search.
+    ///
+    /// If no path exists the result is empty. If `lhs == rhs` the
+    /// result is a singleton graph with just `lhs`.
+    ///
+    /// # Complexity
+    ///
+    /// In the worst case the number of simple paths is exponential
+    /// in the number of nodes, so this is a heavy operation on
+    /// dense graphs. It's fine for analysis-style queries on small
+    /// neighbourhoods.
+    pub fn directed_paths(&mut self, lhs: NodeId, rhs: NodeId) -> Graph {
+        let mut result = Graph::default();
+
+        if lhs == rhs {
+            if let Some(obj) = self.entities.get(&lhs) {
+                result.entities.insert(lhs, obj.clone());
+            }
+            return result;
+        }
+
+        let lhs_p = Pointee::EntityId(lhs);
+        let rhs_p = Pointee::EntityId(rhs);
+
+        // Adjacency: source → [(edge_id, target), ...]. Built once
+        // in O(E); turns BFS/DFS into O(V + E) instead of O(V * E).
+        let mut adj: HashMap<Pointee, Vec<(EdgeID, Pointee)>> = HashMap::new();
+        for (eid, (s, t)) in &self.edges {
+            adj.entry(s.clone()).or_default().push((*eid, t.clone()));
+        }
+        let mut visited: HashSet<Pointee> = HashSet::from([lhs_p.clone()]);
+        let mut stack: Vec<(EdgeID, Pointee, Pointee)> = Vec::new();
+
+        // Recursive DFS, enumerating simple paths. On every successful
+        // arrival at `rhs`, the entire current path is dumped into
+        // `result` (which dedupes via HashMap).
+        fn dfs(
+            cur: &Pointee,
+            target: &Pointee,
+            adj: &HashMap<Pointee, Vec<(EdgeID, Pointee)>>,
+            entities: &HashMap<EntityId, Object>,
+            visited: &mut HashSet<Pointee>,
+            stack: &mut Vec<(EdgeID, Pointee, Pointee)>,
+            result: &mut Graph,
+        ) {
+            fn copy_entity_obj(
+                p: &Pointee,
+                src_entities: &HashMap<EntityId, Object>,
+                dst_entities: &mut HashMap<EntityId, Object>,
+            ) {
+                if let Pointee::EntityId(id) = p {
+                    if let Some(obj) = src_entities.get(id) {
+                        dst_entities.insert(*id, obj.clone());
+                    }
+                }
+            }
+
+            let Some(outgoing) = adj.get(cur) else {
+                return;
+            };
+            for (eid, next) in outgoing {
+                if visited.contains(next) {
+                    continue;
+                }
+                stack.push((*eid, cur.clone(), next.clone()));
+                if next == target {
+                    for (eid, src, tgt) in &*stack {
+                        result.edges.insert(*eid, (src.clone(), tgt.clone()));
+                        copy_entity_obj(src, entities, &mut result.entities);
+                        copy_entity_obj(tgt, entities, &mut result.entities);
+                    }
+                } else {
+                    visited.insert(next.clone());
+                    dfs(next, target, adj, entities, visited, stack, result);
+                    visited.remove(next);
+                }
+                stack.pop();
+            }
+        }
+
+        dfs(
+            &lhs_p,
+            &rhs_p,
+            &adj,
+            &self.entities,
+            &mut visited,
+            &mut stack,
+            &mut result,
+        );
+
+        result
     }
 
     /*
@@ -996,6 +1188,41 @@ mod tests {
 
             (graph, n1, n2, n3, n4, e_a, e_b, meta_edge, edge_to_h, h)
         }
+
+        /// Built graph (note: `e2` is intentionally directed `n3 → n1`,
+        /// not `n1 → n3`):
+        ///
+        /// ```text
+        ///
+        ///  n1 ----------- e1 ---------- n2
+        ///   ^                          / |
+        ///    \         /----- e3 -----   |
+        ///     -- e2 - n3 -------- e4 ----
+        /// ```
+        pub fn create_semple_graph3() -> (
+            Graph,
+            NodeId,
+            NodeId,
+            NodeId,
+            EdgeID,
+            EdgeID,
+            EdgeID,
+            EdgeID,
+        ) {
+            let mut graph = Graph::default();
+            let obj = test_utils::create_simple_obj("attached");
+
+            let n1 = graph.add_node(obj.clone());
+            let n2 = graph.add_node(obj.clone());
+            let n3 = graph.add_node(obj.clone());
+
+            let e1 = graph.add_edge(n1, n2).unwrap();
+            let e2 = graph.add_edge(n3, n1).unwrap(); // reversed on purpose
+            let e3 = graph.add_edge(n3, n2).unwrap();
+            let e4 = graph.add_edge(n3, n2).unwrap(); // parallel to e3
+
+            (graph, n1, n2, n3, e1, e2, e3, e4)
+        }
     }
 
     mod test_globals {
@@ -1385,24 +1612,42 @@ mod tests {
         mod test_undirected_paths {
             use super::*;
 
+            /// Direction is ignored, so even though `e2` is recorded
+            /// `n3 → n1`, the undirected walk uses it as `n1 → n3`.
+            /// All four edges should appear in the result.
             #[test]
             fn undirected_paths() {
-                // Built graph:
-                // ```text
-                // 
-                //  n1--------------e1-----------n2
-                //  \                          / |
-                //   \          /------e3------  |
-                //    ---e2---n3-----------e4----|
-                // ```
-                let mut graph = Graph::default();
-                let obj = test_utils::create_simple_obj("attached");
+                let (mut graph, n1, n2, n3, e1, e2, e3, e4) =
+                    test_utils::create_semple_graph3();
 
-                let n1 = graph.add_node(obj.clone());
-                let n2 = graph.add_node(obj.clone());
-                let n3 = graph.add_node(obj.clone());
+                let result = graph.undirected_paths(n1, n2);
 
-                /* TODO */
+                let result_nodes: HashSet<_> = result.iter_nodes().collect();
+                let result_edges: HashSet<_> = result.iter_edges().collect();
+
+                assert_eq!(result_nodes, [n1, n2, n3].into_iter().collect());
+                assert_eq!(result_edges, [e1, e2, e3, e4].into_iter().collect());
+            }
+        }
+
+        mod test_directed_paths {
+            use super::*;
+
+            /// Direction matters. The only `n1 → n2` path is `e1`:
+            /// `e2` goes `n3 → n1` (wrong way), so we never reach
+            /// `n3` from `n1`, and `e3`/`e4` are unreachable.
+            #[test]
+            fn directed_paths() {
+                let (mut graph, n1, n2, _n3, e1, _e2, _e3, _e4) =
+                    test_utils::create_semple_graph3();
+
+                let result = graph.directed_paths(n1, n2);
+
+                let result_nodes: HashSet<_> = result.iter_nodes().collect();
+                let result_edges: HashSet<_> = result.iter_edges().collect();
+
+                assert_eq!(result_nodes, [n1, n2].into_iter().collect());
+                assert_eq!(result_edges, [e1].into_iter().collect());
             }
         }
     }
