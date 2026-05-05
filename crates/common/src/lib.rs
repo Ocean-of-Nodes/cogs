@@ -97,7 +97,7 @@ pub enum RetrargetEdge {
 pub enum Patch {
     // ------------- START NODE DELTA --------------
     AddNode {
-        id: EntityId,
+        id: NodeId,
         obj: Object,
     },
     RemoveNode {
@@ -132,11 +132,11 @@ pub enum Patch {
         obj: Object,
     },
     ChangeEdgeData {
-        id: AttachTargetID,
+        id: EdgeID,
         delta: Vec<ObjectDelta>,
     },
     RemoveEdgeData {
-        id: AttachTargetID,
+        id: EdgeID,
     },
 
     // ------------- END EDGE DELTA --------------
