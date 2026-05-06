@@ -14,7 +14,7 @@ impl Graph {
     /// object's `Object` at `id`. Cascades any `Pointee::Path`
     /// references through `id` that no longer resolve under the new
     /// shape. An empty `patch` is a successful no-op.
-    pub(crate) fn obj_apply_patch(
+    pub(crate) fn apply_object_delta(
         &mut self,
         id: Uuid,
         patch: Vec<ObjectPatch>,
@@ -31,14 +31,14 @@ impl Graph {
     /// Apply a sequence of [`Patch`]es to this graph in order. Each
     /// patch is dispatched to the matching `silent_*` op; any failure
     /// is wrapped into [`ApplyPatchError`] via the `From` impls.
-    pub(crate) fn apply_patch(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
+    pub(crate) fn apply_delta(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
         for patch in delta {
             match patch {
                 Patch::AddNode { id, obj } => self.silent_add_node_with_id(id, obj)?,
                 Patch::RemoveNode { id } => {
                     self.silent_remove_node(&id)?;
                 }
-                Patch::ChangeNode { id, delta } => self.obj_apply_patch(id, delta)?,
+                Patch::ChangeNode { id, delta } => self.apply_object_delta(id, delta)?,
                 Patch::UpsertNode { id, obj } => {
                     self.silent_replace_node(&id, obj)?;
                 }
@@ -52,7 +52,7 @@ impl Graph {
                     self.silent_retarget_edge(&id, new_target)?
                 }
                 Patch::UpsertEdgeData { id, obj } => self.silent_upsert_attached_obj(id, obj)?,
-                Patch::ChangeEdgeData { id, delta } => self.obj_apply_patch(id, delta)?,
+                Patch::ChangeEdgeData { id, delta } => self.apply_object_delta(id, delta)?,
                 Patch::RemoveEdgeData { id } => self.silent_remove_attached(id)?,
                 Patch::CreateHyperEdge { id, members } => {
                     self.silent_create_hyperedge_with_id(&id, members)?
@@ -69,7 +69,7 @@ impl Graph {
                 Patch::UpsertHyperEdgeData { id, obj } => {
                     self.silent_upsert_attached_obj(id, obj)?
                 }
-                Patch::ChangeHyperEdgeData { id, delta } => self.obj_apply_patch(id, delta)?,
+                Patch::ChangeHyperEdgeData { id, delta } => self.apply_object_delta(id, delta)?,
                 Patch::RemoveHyperEdgeData { id } => self.silent_remove_attached(id)?,
             }
         }

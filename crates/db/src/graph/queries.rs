@@ -230,4 +230,44 @@ impl Graph {
             && !self.edges.contains_key(id)
             && !self.hyper_edge.contains_key(id)
     }
+
+    /// True when `id` is an edge or hyperedge that has an attached
+    /// object (i.e. lives in both `entities` and `edges`/`hyper_edge`).
+    pub(crate) fn has_attached_object(&self, id: &AttachTargetID) -> bool {
+        self.entities.contains_key(id)
+            && (self.edges.contains_key(id) || self.hyper_edge.contains_key(id))
+    }
+
+    /// Whether `id` is an edge or a hyperedge — used by attach-style
+    /// ops to pick the right `Patch::*EdgeData` / `Patch::*HyperEdgeData`
+    /// variant. Returns `None` if `id` isn't a known edge or hyperedge.
+    pub(crate) fn attach_kind(&self, id: &AttachTargetID) -> Option<AttachKind> {
+        if self.hyper_edge.contains_key(id) {
+            Some(AttachKind::HyperEdge)
+        } else if self.edges.contains_key(id) {
+            Some(AttachKind::Edge)
+        } else {
+            None
+        }
+    }
+
+    /// Filter out the pointees that don't currently resolve.
+    /// Used by hyperedge ops that need an "all members exist" check.
+    pub(crate) fn collect_missing_pointees<'a, I>(&self, ps: I) -> HashSet<Pointee>
+    where
+        I: IntoIterator<Item = &'a Pointee>,
+    {
+        ps.into_iter()
+            .filter(|p| !self.is_pointee_exist(p))
+            .cloned()
+            .collect()
+    }
+}
+
+/// Which structural kind an attach-target belongs to. Drives the
+/// choice between the `Edge*Data` and `HyperEdge*Data` patch families.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AttachKind {
+    Edge,
+    HyperEdge,
 }

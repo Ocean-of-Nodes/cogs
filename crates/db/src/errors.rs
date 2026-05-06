@@ -204,7 +204,7 @@ pub(crate) enum ObjectPatchError {
     IndexOutOfBounds { index: usize },
 }
 
-/// Errors returned by [`crate::Graph::obj_apply_patch`].
+/// Errors returned by [`crate::Graph::apply_object_delta`].
 #[derive(Debug)]
 pub(crate) enum DeltaError {
     /// The id has no `Object` to patch (could be unknown, or an

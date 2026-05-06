@@ -45,7 +45,7 @@ use uuid::Uuid;
 
 use common::*;
 
-mod apply_patch;
+mod apply_delta;
 mod cascade;
 mod constructors;
 mod destructors;
@@ -55,6 +55,7 @@ mod modifiers;
 mod queries;
 
 pub(crate) use index::PointeeUses;
+pub(crate) use queries::AttachKind;
 
 /// Identifier returned by [`Graph::subscribe_on_change`] and used to
 /// remove the listener via [`Graph::unsubscribe_on_change`].

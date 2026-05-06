@@ -21,5 +21,5 @@ mod test_globals;
 mod test_modifiers;
 
 mod lift_events;
-mod test_apply_patch;
-mod test_obj_apply_patch;
+mod test_apply_delta;
+mod test_apply_object_delta;

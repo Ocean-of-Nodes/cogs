@@ -12,7 +12,7 @@ fn obj_with(fields: &[(&str, Field)]) -> Object {
 fn unknown_id() {
     let mut g = Graph::default();
     let err = g
-        .obj_apply_patch(Uuid::new_v4(), vec![])
+        .apply_object_delta(Uuid::new_v4(), vec![])
         .unwrap_err();
     assert!(matches!(err, DeltaError::NotFound(_)));
 }
@@ -21,7 +21,7 @@ fn unknown_id() {
 fn empty_patch_is_noop() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[("a", Field::Number(1))]));
-    g.obj_apply_patch(n1, vec![]).unwrap();
+    g.apply_object_delta(n1, vec![]).unwrap();
     assert_eq!(g.obj(&n1), Some(&obj_with(&[("a", Field::Number(1))])));
     test_utils::check_index_invariant(&g);
 }
@@ -30,7 +30,7 @@ fn empty_patch_is_noop() {
 fn add_field_on_fresh_key() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[]));
-    g.obj_apply_patch(
+    g.apply_object_delta(
         n1,
         vec![ObjectPatch::AddField {
             name: "x".into(),
@@ -46,7 +46,7 @@ fn add_field_on_existing_key_errors() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[("x", Field::Number(1))]));
     let err = g
-        .obj_apply_patch(
+        .apply_object_delta(
             n1,
             vec![ObjectPatch::AddField {
                 name: "x".into(),
@@ -64,7 +64,7 @@ fn add_field_on_existing_key_errors() {
 fn remove_field_existing() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[("x", Field::Number(1)), ("y", Field::Null)]));
-    g.obj_apply_patch(
+    g.apply_object_delta(
         n1,
         vec![ObjectPatch::RemoveField { name: "x".into() }],
     )
@@ -78,7 +78,7 @@ fn remove_field_missing_errors() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[]));
     let err = g
-        .obj_apply_patch(n1, vec![ObjectPatch::RemoveField { name: "x".into() }])
+        .apply_object_delta(n1, vec![ObjectPatch::RemoveField { name: "x".into() }])
         .unwrap_err();
     assert!(matches!(
         err,
@@ -90,7 +90,7 @@ fn remove_field_missing_errors() {
 fn upsert_field_inserts_and_replaces() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[("x", Field::Number(1))]));
-    g.obj_apply_patch(
+    g.apply_object_delta(
         n1,
         vec![
             ObjectPatch::UpsertField {
@@ -119,7 +119,7 @@ fn array_patch_adds_and_removes() {
             Field::Number(3),
         ]),
     )]));
-    g.obj_apply_patch(
+    g.apply_object_delta(
         n1,
         vec![ObjectPatch::ArrayPatch {
             name: "arr".into(),
@@ -144,7 +144,7 @@ fn array_patch_on_non_array_errors() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[("x", Field::Number(1))]));
     let err = g
-        .obj_apply_patch(
+        .apply_object_delta(
             n1,
             vec![ObjectPatch::ArrayPatch {
                 name: "x".into(),
@@ -164,7 +164,7 @@ fn array_patch_index_out_of_bounds() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[("arr", Field::Array(vec![Field::Number(1)]))]));
     let err = g
-        .obj_apply_patch(
+        .apply_object_delta(
             n1,
             vec![ObjectPatch::ArrayPatch {
                 name: "arr".into(),
@@ -186,7 +186,7 @@ fn sub_object_patch_navigates_and_applies() {
         "inner",
         Field::Object(obj_with(&[("a", Field::Number(1))])),
     )]));
-    g.obj_apply_patch(
+    g.apply_object_delta(
         n1,
         vec![ObjectPatch::SubObjectPatch {
             path: LocalObjPath::new("inner").unwrap(),
@@ -210,7 +210,7 @@ fn sub_object_patch_through_non_object_errors() {
     let mut g = Graph::default();
     let n1 = g.add_node(obj_with(&[("inner", Field::Number(1))]));
     let err = g
-        .obj_apply_patch(
+        .apply_object_delta(
             n1,
             vec![ObjectPatch::SubObjectPatch {
                 path: LocalObjPath::new("inner").unwrap(),
@@ -232,7 +232,7 @@ fn cascades_path_pointees_after_field_removal() {
     let path = Pointee::Path(GlobalObjPath::new(n1, "data").unwrap());
     let e = g.add_edge(n2, path.clone()).unwrap();
 
-    g.obj_apply_patch(n1, vec![ObjectPatch::RemoveField { name: "data".into() }])
+    g.apply_object_delta(n1, vec![ObjectPatch::RemoveField { name: "data".into() }])
         .unwrap();
 
     // The Pointee::Path no longer resolves → cascade kills the edge.

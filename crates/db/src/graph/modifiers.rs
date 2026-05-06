@@ -14,9 +14,10 @@ use crate::errors::{
     MembersNotInHyperedgeError, NoAttachedObjectError, NodeNotFoundError, PointeesNotFoundError,
     RemoveHyperedgeMembersError, RetargetError,
 };
+use crate::graph::AttachKind;
+use crate::graph::Graph;
 use crate::object_patch::diff_object;
 use crate::types::EntityType;
-use crate::graph::Graph;
 
 impl Graph {
     pub(crate) fn silent_attach_obj(
@@ -283,22 +284,50 @@ impl Graph {
         Ok(())
     }
 
+    /// Unified set-or-remove of the attached object on an edge or
+    /// hyperedge. `Some(obj)` replaces / sets the payload, `None`
+    /// removes it. Returns the previous attached object.
+    ///
+    /// Note the asymmetric cascade:
+    /// - `None` (remove) — every `Pointee::Path` through `id` becomes
+    ///   invalid (no object to navigate). All paths are killed via
+    ///   [`cascade_path_references_through`].
+    /// - `Some(obj)` (replace) — only paths that no longer resolve
+    ///   under the new object are killed; surviving fields keep
+    ///   their references via [`cascade_invalid_paths_through`].
+    pub(crate) fn silent_set_attached_obj(
+        &mut self,
+        id: AttachTargetID,
+        new: Option<Object>,
+    ) -> Result<Option<Object>, NoAttachedObjectError> {
+        if !self.has_attached_object(&id) {
+            return Err(NoAttachedObjectError { id });
+        }
+        let old = match new {
+            Some(obj) => {
+                let prev = self.entities.insert(id, obj);
+                self.cascade_invalid_paths_through(id);
+                prev
+            }
+            None => {
+                let prev = self.entities.remove(&id);
+                self.cascade_path_references_through(id);
+                prev
+            }
+        };
+        Ok(old)
+    }
+
     pub(crate) fn silent_replace_attached_obj(
         &mut self,
         id: &AttachTargetID,
         obj: Object,
     ) -> Result<Object, NoAttachedObjectError> {
-        let is_attach_target = self.entities.contains_key(id)
-            && (self.edges.contains_key(id) || self.hyper_edge.contains_key(id));
-        if !is_attach_target {
-            return Err(NoAttachedObjectError { id: *id });
-        }
-        let old = self
-            .entities
-            .insert(*id, obj)
-            .expect("is_attach_target checked above");
-        self.cascade_invalid_paths_through(*id);
-        Ok(old)
+        // The unified op guarantees `Some(old)` because
+        // `has_attached_object` was true at the start.
+        Ok(self
+            .silent_set_attached_obj(*id, Some(obj))?
+            .expect("has_attached_object guaranteed an old object"))
     }
 
     /// Replace the attached object on an edge or hyperedge. Strict —
@@ -313,17 +342,28 @@ impl Graph {
         obj: Object,
     ) -> Result<Field, NoAttachedObjectError> {
         let new_field_count = obj.len();
-        let is_hyper = self.hyper_edge.contains_key(id);
+        let kind = self.attach_kind(id);
 
         let old = self.silent_replace_attached_obj(id, obj.clone())?;
         let delta = diff_object(&old, &obj);
         let use_change = delta.len() <= new_field_count;
 
-        match (is_hyper, use_change) {
-            (true, true) => self.emit_patch(Patch::ChangeHyperEdgeData { id: *id, delta }),
-            (true, false) => self.emit_patch(Patch::UpsertHyperEdgeData { id: *id, obj }),
-            (false, true) => self.emit_patch(Patch::ChangeEdgeData { id: *id, delta }),
-            (false, false) => self.emit_patch(Patch::UpsertEdgeData { id: *id, obj }),
+        match (kind, use_change) {
+            (Some(AttachKind::HyperEdge), true) => {
+                self.emit_patch(Patch::ChangeHyperEdgeData { id: *id, delta })
+            }
+            (Some(AttachKind::HyperEdge), false) => {
+                self.emit_patch(Patch::UpsertHyperEdgeData { id: *id, obj })
+            }
+            (Some(AttachKind::Edge), true) => {
+                self.emit_patch(Patch::ChangeEdgeData { id: *id, delta })
+            }
+            (Some(AttachKind::Edge), false) => {
+                self.emit_patch(Patch::UpsertEdgeData { id: *id, obj })
+            }
+            // Unreachable — `silent_replace_attached_obj` would have
+            // failed otherwise.
+            (None, _) => {}
         }
 
         Ok(Field::Object(old))

@@ -6,7 +6,7 @@ use common::*;
 use crate::errors::ObjectPatchError;
 
 /// Apply a sequence of `ObjectPatch` to an `Object` in place. Used by
-/// `obj_apply_patch` to replay `Change*` patches.
+/// `apply_object_delta` to replay `Change*` patches.
 pub(crate) fn apply_object_patches(
     obj: &mut Object,
     patches: Vec<ObjectPatch>,

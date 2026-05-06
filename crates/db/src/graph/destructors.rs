@@ -9,6 +9,7 @@ use common::*;
 use crate::errors::{
     EdgeNotFoundError, HyperEdgeNotFoundError, NoAttachedObjectError, NodeNotFoundError,
 };
+use crate::graph::AttachKind;
 use crate::types::Triplet;
 use crate::graph::Graph;
 
@@ -133,37 +134,32 @@ impl Graph {
     /// structural element itself stays alive; only the `Object`
     /// stored on top of it is dropped, along with any `Pointee::Path`
     /// references that depended on the attached object's fields.
-    pub fn silent_remove_attached(
+    pub(crate) fn silent_remove_attached(
         &mut self,
         target: AttachTargetID,
     ) -> Result<(), NoAttachedObjectError> {
-        let is_attach_target = self.entities.contains_key(&target)
-            && (self.edges.contains_key(&target) || self.hyper_edge.contains_key(&target));
-        if !is_attach_target {
-            return Err(NoAttachedObjectError { id: target });
-        }
-
-        self.entities.remove(&target);
-        self.cascade_path_references_through(target);
-        Ok(())
+        self.silent_set_attached_obj(target, None).map(|_| ())
     }
 
+    /// Remove the attached object on an edge or hyperedge and emit
+    /// the corresponding `Remove*Data` patch.
     pub fn remove_attached(
         &mut self,
         target: AttachTargetID,
     ) -> Result<(), NoAttachedObjectError> {
-        // Determine the patch variant *before* the silent op — both
-        // structures stay alive after the call, but resolving the
-        // type is conceptually a pre-condition.
-        let is_edge = self.edges.contains_key(&target);
-        let is_hyper = self.hyper_edge.contains_key(&target);
+        // Resolve the kind *before* the silent op — the structure
+        // stays alive after the call, but kind resolution is a
+        // pre-condition for picking the patch variant.
+        let kind = self.attach_kind(&target);
 
         self.silent_remove_attached(target)?;
 
-        if is_edge {
-            self.emit_patch(Patch::RemoveEdgeData { id: target });
-        } else if is_hyper {
-            self.emit_patch(Patch::RemoveHyperEdgeData { id: target });
+        match kind {
+            Some(AttachKind::Edge) => self.emit_patch(Patch::RemoveEdgeData { id: target }),
+            Some(AttachKind::HyperEdge) => {
+                self.emit_patch(Patch::RemoveHyperEdgeData { id: target })
+            }
+            None => {}
         }
         Ok(())
     }

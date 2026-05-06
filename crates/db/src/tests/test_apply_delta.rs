@@ -5,7 +5,7 @@ use super::*;
 fn assert_replay_matches(original: &Graph) {
     let mut replayed = Graph::default();
     replayed
-        .apply_patch(original.events.clone())
+        .apply_delta(original.events.clone())
         .expect("replay must succeed");
     test_utils::check_index_invariant(&replayed);
     assert_eq!(original.entities, replayed.entities, "entities mismatch");
@@ -132,7 +132,7 @@ fn remove_node_cascade_replays() {
 fn missing_precondition_errors() {
     let mut g = Graph::default();
     let err = g
-        .apply_patch(vec![Patch::RemoveNode { id: Uuid::new_v4() }])
+        .apply_delta(vec![Patch::RemoveNode { id: Uuid::new_v4() }])
         .unwrap_err();
     assert!(matches!(err, ApplyPatchError::NodeNotFound(_)));
 }
