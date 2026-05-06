@@ -25,13 +25,13 @@ pub struct ImmutableGraph {
 }
 
 impl ImmutableGraph {
-    pub fn new(snapshot: Vec<Patch>) -> Self {
+    pub fn new(snapshot: Delta) -> Self {
         let mut g = Self::default();
         g.apply_delta(snapshot);
         g
     }
 
-    fn apply_delta(&mut self, snapshot: Vec<Patch>) {
+    fn apply_delta(&mut self, snapshot: Delta) {
 
     }
 }

@@ -8,13 +8,15 @@ A node is a container for an object.
 
 ![Object](obj.png)
 
-Object fields are dynamically typed: string, number, bool, null, or link. A link is a reference to another entity — node, edge, hyperedge, or a sub-object inside another field.
+Object fields are dynamically typed: string, number, bool, null, link or subobject. A link is a reference to another entity — node, edge, hyperedge, or a sub-object inside another field.
 
 A node can be *free* — having no incoming or outgoing edges and not being a member of any hyperedge.
 
 ## Subobjects
 
-A *subobject* is a field inside an entity's `Object` whose value is itself an `Object` (or any nested field reachable through a chain of object-typed fields). A subobject has **no identity of its own**: it doesn't appear in `iter_entities`, has no UUID, and is addressed by a `Path` of the form `<entity-uuid>/<field>[/<field>...]`.
+![Subobject](subobj.png)
+
+A *subobject* is a field inside an entity's `Object` whose value is itself an `Object` (or any nested field reachable through a chain of object-typed fields). A subobject has **no identity of its own**: it doesn't appear in `iter_entities`, has no UUID, and is addressed by a `GlobalPath` of the form `<entity-uuid>/<field>[/<field>...]`.
 
 Subobjects are not entities. They cannot:
 - be classified by `get_type` (which is for ids);
@@ -34,22 +36,24 @@ An edge whose at least one endpoint is itself an edge or hyperedge is called a *
 
 ## Hyperedges
 
-A hyperedge groups an arbitrary number of pointees (entities or subobjects) without imposing direction or pairing.
+![Hyperedge](hyperedge.png)
+
+A hyperedge groups an arbitrary number of pointees (entities or subobjects) without imposing direction or pairing. A hyperedge is essentially a subgraph or what will later be called a `space`.
 
 ## Attached objects
 
-An *attached object* is an `Object` that piggy-backs on top of an edge or hyperedge, sharing its UUID. It lets structural elements (edges, hyperedges) carry data without introducing a proxy node.
+An *attached object* is an `Object` that piggy-backs on top of an edge or hyperedge, sharing its id. It lets structural elements (edges, hyperedges) carry data without introducing a proxy node.
 
 ## Invariants
 
 - *Endpoints exist.* Every edge has both endpoints alive. Deleting an entity cascades to all edges that have it as source or target, and recursively to metaedges that depended on those edges.
 - *Hyperedge membership.* When a member of a hyperedge is deleted, it is removed from the hyperedge. A hyperedge that becomes empty is itself deleted (which in turn cascades to any edges that have it as source or target).
 
-# Reducer bestiary
+# DB stored code and view's
 
 In traditional databases, views are created using schemas and modified by queries. COGs use functions to create views.
 
-You use macro `view` for marking function. That's create new a materialized view (by differential data flow). That is, this is the function fn(g1, g2, ...) -> gr, that's accept some spaces.
+You use macro `view` for marking function. That's create new a incrimental materialized view. That is, this is the function fn(g1, g2, ...) -> gr, that's accept some spaces.
 
 ```rust
     #[view]

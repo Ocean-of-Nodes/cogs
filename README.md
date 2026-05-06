@@ -1,5 +1,7 @@
 # COG's
 
+![Logo](logo.webp)
+
 COG's is database espicaly design for language tools such as: translators (disassemblers, transpilers, compilers), IDE, static analyzer, symbolic code analyzer. 
 
 # The Future of Language Tools

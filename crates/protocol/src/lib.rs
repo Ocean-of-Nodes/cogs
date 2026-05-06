@@ -49,15 +49,15 @@ pub enum CallError {
 /// Wire frame type of incoming msg.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum InFrame {
-    CallReply { id: RequestId, ret: Result<Vec<Patch>, CallError> },
+    CallReply { id: RequestId, ret: Result<Delta, CallError> },
     /// Sended when hyper edge not found
     SubscribeError { id: SubId },
-    SubscribeDelta { id: SubId, delta: Vec<Patch> },
+    SubscribeDelta { id: SubId, delta: Delta },
     
-    ColdInitialReply { id: RequestId, tracker: TrackerId, delta: Vec<Patch> },
+    ColdInitialReply { id: RequestId, tracker: TrackerId, delta: Delta },
     /// Sended when hyper edge not found
     ColdError { id: SubId },
-    ColdDelta { id: RequestId, delta: Vec<Patch> }
+    ColdDelta { id: RequestId, delta: Delta }
 }
 
 /// Failure mode of the underlying transport — I/O errors,

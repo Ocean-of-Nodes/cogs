@@ -12,6 +12,8 @@ pub use local_path::LocalObjPath;
 /// Used by db for tracker's that's accumulate changes 
 /// for caller that's want get it by next call
 pub type TrackerId = Uuid;
+/// Delta is array of `Patch`
+pub type Delta = Vec<Patch>;
 
 /// Entity is a common type for nodes/edges/metaedge/hyperedge
 pub type EntityId = Uuid;
@@ -61,8 +63,8 @@ pub enum Field {
     // ------- END FUNDAMENTAL TYPES --------------
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ObjectDelta {
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub enum ObjectPatch {
     AddField {
         name: String,
         field: Field,
@@ -74,26 +76,26 @@ pub enum ObjectDelta {
         name: String,
         field: Field,
     },
-    ArrayDelta {
+    ArrayPatch {
         name: String,
         removed_indices: Vec<usize>,
         added_fields: Vec<(usize, Field)>,
     },
-    SubObjectDelta {
+    SubObjectPatch {
         /// Path is a slash-separated string representing the path
         /// to the nested object
         path: LocalObjPath,
-        delta: Vec<ObjectDelta>,
+        delta: Vec<ObjectPatch>,
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum RetrargetEdge {
     Source(Pointee),
     Target(Pointee),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
 pub enum Patch {
     // ------------- START NODE DELTA --------------
     AddNode {
@@ -105,7 +107,7 @@ pub enum Patch {
     },
     ChangeNode {
         id: NodeId,
-        delta: Vec<ObjectDelta>,
+        delta: Vec<ObjectPatch>,
     },
     UpsertNode {
         id: NodeId,
@@ -133,7 +135,7 @@ pub enum Patch {
     },
     ChangeEdgeData {
         id: EdgeID,
-        delta: Vec<ObjectDelta>,
+        delta: Vec<ObjectPatch>,
     },
     RemoveEdgeData {
         id: EdgeID,
@@ -164,7 +166,7 @@ pub enum Patch {
     },
     ChangeHyperEdgeData {
         id: HyperEdgeId,
-        delta: Vec<ObjectDelta>,
+        delta: Vec<ObjectPatch>,
     },
     RemoveHyperEdgeData {
         id: HyperEdgeId,

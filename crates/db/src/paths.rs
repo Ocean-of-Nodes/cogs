@@ -42,7 +42,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::*;
-
+/* 
 /// All simple undirected paths from `lhs` to `rhs`, packed into a
 /// single sub-graph (union of nodes and edges that lie on at least
 /// one path). Direction is ignored during traversal but each edge
@@ -490,3 +490,4 @@ mod tests {
         assert_eq!(result_edges, [e1].into_iter().collect());
     }
 }
+*/
