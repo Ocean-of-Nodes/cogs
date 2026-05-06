@@ -1,12 +1,12 @@
 # COG's
 
-![Logo](logo.webp)
+![Logo](readme_asserts/logo.webp)
 
 COG's is database espicaly design for language tools such as: translators (disassemblers, transpilers, compilers), IDE, static analyzer, symbolic code analyzer. 
 
 # The Future of Language Tools
 
-![Lego](image.png)
+![Lego](readme_asserts/lego.png)
 
 Before talking about programming languages, I'd like to take a break and talk about performance and data management complexity in general.
 
@@ -44,30 +44,15 @@ In this case, they would turn into something similar to compiler plugins, for ex
 - Run partially valid code (not finished code) and step by step add pieces and continue execution
 - Universal schema and convertor. [Dragon](https://eng.uber.com/dragon-schema-integration-at-uber-scale/) makes an effort in this direction, but we don't know, will Uber make the project public or not. This would be a major improvement for people who engaged in date mining or wont extract data in a special format
 
+# Ready to use?
 
--------------
-Честно, идея сильная, но проект сейчас сыроват — больше скелет, чем работающая система. По делу:
+Short answer: no.
 
-Что нравится
-Рёбра как first-class сущности с мета-рёбрами — это не «придумал чтоб было», а реальная вещь: knowledge-графы, argumentation systems, причинно-следственные модели, 2-категории. У RDF есть reification, у Neo4j — properties on edges, но «ребро между рёбрами без декомпозиции» встречается редко. Хороший фундамент.
-Patch + listeners сразу — фактически event-sourcing / CRDT-подложка. То, что это есть с самого начала, а не пришивается потом — правильный инстинкт. Откроет совместное редактирование, undo/redo, репликацию.
-Субграфы с путями + Sheave — внятная композиционная история. Sheave — амбициозное имя из топологии/теорката, но концепт «пучок межграфовых связей со своей внутренней структурой» осмыслен.
-Документация в текущем виде — для pet-проекта непривычно подробная, ASCII-схемы реально помогают читать API.
-Что насторожило
-Производительность под идеей подгрызена. is_node/is_edge → global_nodes()/global_edges(), каждый из которых рекурсивно собирает HashSet по всему дереву субграфов. add_edge дёргает is_exist дважды → O(N) на вставку, O(N²) на построение. Комментарии про JIT в тестах показывают, что ты это понимаешь, но архитектурно проблема в том, что ID не скоупятся к субграфу — поэтому любой локальной операции приходится сканировать весь мир.
-Типобезопасность аллюзорна. EntityId = NodeId = EdgeID = Uuid — это просто алиасы, компилятор их не различает. Документация говорит одно, типы — другое. Либо newtype-обёртки (struct NodeId(Uuid)), либо честно убрать алиасы и оставить EntityId.
-Реальных compile-ошибок дофига, не косметика: get_edge объявлен Result<…>, но тело возвращает Option; neighbours() возвращает Result, а тесты зовут .len() / .contains() напрямую; sheave(&self, …) -> &mut Graph вернуть из &self нельзя в принципе. Сейчас cargo check красный, и это не из-за unimplemented!().
-Очень много unimplemented!() — is_existing_path, is_linked, replace_node, retraget_edge, sheave, половина apply_delta. Контракты придуманы, поведение — нет.
-String как ключ субграфа — пути не проверяются на компиляции, to_str().unwrap() на компонентах PathBuf жуёт не-UTF8 имена. Если субграфы важны, это слабое звено.
-Опечатки в полях: beetween_edges, ListernerID, RetrargetEdge, chank, olready. В именах полей и enum-вариантов — это API, потом переименовывать дороже.
-Главный стратегический вопрос
-Что субграфы реально дают, кроме лейбла? Сейчас они стоят дорого (рекурсия везде) и не дают изоляции (ID плоские). Если хочется группировки — может быть достаточно HashMap<EntityId, SubgraphTag> и плоского хранилища. Если хочется настоящей инкапсуляции — тогда субграф должен иметь свой EntityId-неймспейс, а cross-edges становятся явными гражданами (как Sheave — но между всеми субграфами, а не только корневыми).
+Longer answer: I wrote this alone, with heavy assistance from an LLM that occasionally hallucinates APIs into existence. There are bugs I haven't found, bugs I'm pretending I haven't seen, and `todo!()` macros where features should be. Classic chicken-and-egg — the project needs users to surface bugs, and the bugs are what's keeping users away. If you'd like to be the chicken (or the egg, dealer's choice), godspeed.
 
-Куда я бы пошёл первым
-Сделать чтобы cargo check стал зелёным — это разблокирует всё остальное.
-Завести бенчмарк (10k нодов, 50k рёбер) — он сам подскажет, где архитектура трещит.
-Определиться с моделью неймспейса до того, как начнёшь писать is_existing_path/is_linked — алгоритмы обхода чувствительны к тому, плоские у тебя ID или нет.
-Если коротко: идея на проект-на-несколько-лет, исполнение пока на неделю. Это не плохо для hobby — это нормальное состояние «фундамент намечен». Но прямо сейчас ценнее заземлить типы и компиляцию, чем рисовать новые методы.
+Please accept the gif below as official documentation of my regret.
+
+![Were sorry](readme_asserts/were-sorry.gif)
 
 
 
