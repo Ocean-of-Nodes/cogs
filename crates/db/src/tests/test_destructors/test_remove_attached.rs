@@ -69,7 +69,7 @@ fn removes_hyperedge_attached() {
 
     g.remove_attached(h).unwrap();
 
-    assert!(g.hyper_edge.contains_key(&h));
+    assert!(g.hyperedges.contains_key(&h));
     assert!(!g.entities.contains_key(&h));
     assert_eq!(
         *g.events.last().unwrap(),

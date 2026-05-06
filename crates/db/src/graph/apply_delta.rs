@@ -24,7 +24,7 @@ impl Graph {
             .get_mut(&id)
             .ok_or(DeltaError::NotFound(EntityNotFoundError { id }))?;
         apply_object_patches(obj, patch).map_err(DeltaError::Delta)?;
-        self.cascade_invalid_paths_through(id);
+        self.invalidate_dead_paths_through(id);
         Ok(())
     }
 

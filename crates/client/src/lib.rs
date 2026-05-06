@@ -18,7 +18,7 @@ pub struct ImmutableGraph {
     edges: HashMap<EdgeId, (EntityId, EntityId)>,
 
     /// Hold hyperedges
-    hyper_edge: HashMap<HyperedgeId, Vec<EntityId>>,
+    hyperedges: HashMap<HyperedgeId, Vec<EntityId>>,
 
     /// Tracks external endpoints of a hyperedge
     external: HashMap<HyperedgeId, Vec<EntityId>>, 

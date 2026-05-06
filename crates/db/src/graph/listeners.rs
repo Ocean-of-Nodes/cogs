@@ -7,7 +7,7 @@ use crate::graph::Graph;
 
 impl Graph {
     /// Append a patch to the graph's event log.
-    pub(crate) fn emit_patch(&mut self, patch: Patch) {
+    pub(crate) fn record_patch(&mut self, patch: Patch) {
         self.events.push(patch);
     }
 

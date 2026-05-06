@@ -132,7 +132,7 @@ fn hyperedge_empties_and_dies() {
 
     g.remove_node(&n1).unwrap();
 
-    assert!(!g.hyper_edge.contains_key(&h));
+    assert!(!g.hyperedges.contains_key(&h));
     test_utils::check_index_invariant(&g);
 }
 
@@ -153,7 +153,7 @@ fn cascade_through_dead_hyperedge() {
 
     g.remove_node(&n1).unwrap();
 
-    assert!(!g.hyper_edge.contains_key(&h));
+    assert!(!g.hyperedges.contains_key(&h));
     assert!(!g.edges.contains_key(&e));
     assert!(g.is_exist(&n2));
     test_utils::check_index_invariant(&g);

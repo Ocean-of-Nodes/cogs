@@ -40,7 +40,7 @@ fn meta_edge_with_hyperedge_endpoint() {
     assert!(matches!(g.get_type(edge_to_h), Some(EntityType::MetaEdge)));
 }
 
-/// Pure hyperedge — only in `hyper_edge`.
+/// Pure hyperedge — only in `hyperedges`.
 #[test]
 fn hyperedge() {
     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
@@ -60,7 +60,7 @@ fn attached_on_edge() {
 }
 
 /// Object attached on top of a hyperedge — id
-/// collides in both `entities` and `hyper_edge` →
+/// collides in both `entities` and `hyperedges` →
 /// AttachedObject.
 #[test]
 fn attached_on_hyperedge() {

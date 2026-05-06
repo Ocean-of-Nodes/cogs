@@ -11,7 +11,7 @@ pub fn create_simple_obj(field_name: &str) -> Object {
 }
 
 /// Cross-check `pointee_uses` and `entity_to_path_pointees`
-/// against `edges` / `hyper_edge`. Panics on the first
+/// against `edges` / `hyperedges`. Panics on the first
 /// inconsistency. Call after any mutation to assert the
 /// reverse-index invariants are intact.
 pub fn check_index_invariant(g: &Graph) {
@@ -64,7 +64,7 @@ pub fn check_index_invariant(g: &Graph) {
     }
 
     // 4) Every hyperedge member has the hyperedge registered.
-    for (hid, members) in &g.hyper_edge {
+    for (hid, members) in &g.hyperedges {
         for m in members {
             let ok = g
                 .pointee_uses
@@ -105,7 +105,7 @@ pub fn check_index_invariant(g: &Graph) {
             );
         }
         for hid in &uses.hyperedges {
-            let members = g.hyper_edge.get(hid);
+            let members = g.hyperedges.get(hid);
             assert!(
                 members.is_some_and(|ms| ms.contains(pointee)),
                 "pointee_uses[{:?}].hyperedges has stale hid {}",

@@ -6,7 +6,7 @@ use common::*;
 /// A complete description of an edge — its id and both endpoints.
 /// Returned by [`crate::Graph::edge`] and [`crate::Graph::remove_edge`].
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Triplet {
+pub(crate) struct EdgeView {
     pub id: EdgeId,
     pub source: Pointee,
     pub target: Pointee,
@@ -18,11 +18,11 @@ pub(crate) struct Triplet {
 pub(crate) enum EntityType {
     Node,
     Edge,
-    HyperEdge,
+    Hyperedge,
     /// An edge whose at least one endpoint is itself an edge or
     /// hyperedge. Structurally still in `edges`.
     MetaEdge,
-    /// An id that lives in `entities` AND in `edges`/`hyper_edge` —
+    /// An id that lives in `entities` AND in `edges`/`hyperedges` —
     /// i.e. an edge or hyperedge with `attach_obj` already called on
     /// it.
     AttachedObject,
@@ -35,7 +35,7 @@ pub(crate) enum EntityType {
 pub enum PointeeKind {
     Node,
     Edge,
-    HyperEdge,
+    Hyperedge,
     MetaEdge,
     AttachedObject,
     Subobject,

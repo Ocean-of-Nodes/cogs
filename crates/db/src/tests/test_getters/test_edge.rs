@@ -9,7 +9,7 @@ fn edge1() {
     let u = graph.edge(&e_a).unwrap();
     assert_eq!(
         u,
-        Triplet {
+        EdgeView {
             id: e_a,
             source: n1.into(),
             target: n2.into()
@@ -27,7 +27,7 @@ fn edge2() {
     let u = graph.edge(&meta_edge).unwrap();
     assert_eq!(
         u,
-        Triplet {
+        EdgeView {
             id: meta_edge,
             source: n1.into(),
             target: e_b.into(),
@@ -45,7 +45,7 @@ fn edge3() {
     let u = graph.edge(&edge_to_h).unwrap();
     assert_eq!(
         u,
-        Triplet {
+        EdgeView {
             id: edge_to_h,
             source: n1.into(),
             target: h.into(),
@@ -64,7 +64,7 @@ fn edge4() {
     let u = g.edge(&e1).unwrap();
     assert_eq!(
         u,
-        Triplet {
+        EdgeView {
             id: e1,
             source: n1.into(),
             target: n1.into(),
@@ -88,7 +88,7 @@ fn edge5() {
     let u = g.edge(&e1).unwrap();
     assert_eq!(
         u,
-        Triplet {
+        EdgeView {
             id: e1,
             source: p1,
             target: p2,

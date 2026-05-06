@@ -61,15 +61,15 @@ impl Graph {
         // Resolve target type *before* mutating so we can pick the
         // right patch variant. After silent_attach_obj succeeds, the
         // type is guaranteed to be one of the attach-target kinds.
-        let is_hyper = self.hyper_edge.contains_key(&target);
+        let is_hyper = self.hyperedges.contains_key(&target);
 
         self.silent_attach_obj(target, obj.clone())?;
 
         if is_hyper {
-            self.emit_patch(Patch::UpsertHyperedgeData { id: target, obj });
+            self.record_patch(Patch::UpsertHyperedgeData { id: target, obj });
         } else {
             // MetaEdge is structurally an edge, so it lives in `self.edges`.
-            self.emit_patch(Patch::UpsertEdgeData { id: target, obj });
+            self.record_patch(Patch::UpsertEdgeData { id: target, obj });
         }
         Ok(())
     }
@@ -79,7 +79,7 @@ impl Graph {
         id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), AddHyperedgeMembersError> {
-        if !self.hyper_edge.contains_key(&id) {
+        if !self.hyperedges.contains_key(&id) {
             return Err(AddHyperedgeMembersError::HyperedgeNotFound(
                 HyperedgeNotFoundError { id },
             ));
@@ -92,7 +92,7 @@ impl Graph {
             ));
         }
 
-        let existing = self.hyper_edge.get(&id).expect("checked above");
+        let existing = self.hyperedges.get(&id).expect("checked above");
         let duplicates: Vec<Pointee> = m
             .iter()
             .filter(|p| existing.contains(*p))
@@ -106,7 +106,7 @@ impl Graph {
             ));
         }
 
-        let members_set = self.hyper_edge.get_mut(&id).expect("checked above");
+        let members_set = self.hyperedges.get_mut(&id).expect("checked above");
         for p in &m {
             members_set.insert(p.clone());
         }
@@ -129,7 +129,7 @@ impl Graph {
         m: HashSet<Pointee>,
     ) -> Result<(), AddHyperedgeMembersError> {
         self.silent_add_hyperedge_members(id, m.clone())?;
-        self.emit_patch(Patch::AddHyperedgeMembers { id, members: m });
+        self.record_patch(Patch::AddHyperedgeMembers { id, members: m });
         Ok(())
     }
 
@@ -138,7 +138,7 @@ impl Graph {
         id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), RemoveHyperedgeMembersError> {
-        let Some(current) = self.hyper_edge.get(&id) else {
+        let Some(current) = self.hyperedges.get(&id) else {
             return Err(RemoveHyperedgeMembersError::HyperedgeNotFound(
                 HyperedgeNotFoundError { id },
             ));
@@ -157,7 +157,7 @@ impl Graph {
             ));
         }
 
-        let members_set = self.hyper_edge.get_mut(&id).expect("checked above");
+        let members_set = self.hyperedges.get_mut(&id).expect("checked above");
         for p in &m {
             members_set.remove(p);
         }
@@ -177,9 +177,9 @@ impl Graph {
         // Invariant: hyperedges are never empty. If membership went to
         // zero, kill the hyperedge and cascade.
         if now_empty {
-            self.hyper_edge.remove(&id);
+            self.hyperedges.remove(&id);
             self.entities.remove(&id);
-            self.cascade_remove_id(id);
+            self.cascade_remove_entity(id);
         }
 
         Ok(())
@@ -191,7 +191,7 @@ impl Graph {
         m: HashSet<Pointee>,
     ) -> Result<(), RemoveHyperedgeMembersError> {
         self.silent_remove_hyperedge_members(id, m.clone())?;
-        self.emit_patch(Patch::RemoveHyperedgeMembers { id, members: m });
+        self.record_patch(Patch::RemoveHyperedgeMembers { id, members: m });
         Ok(())
     }
 
@@ -210,7 +210,7 @@ impl Graph {
             .expect("is_node checked above");
         // Path-pointees through this node may no longer resolve
         // under the new object — cascade the dead ones.
-        self.cascade_invalid_paths_through(*id);
+        self.invalidate_dead_paths_through(*id);
         Ok(old)
     }
 
@@ -228,9 +228,9 @@ impl Graph {
 
         let delta = diff_object(&old, &obj);
         if delta.len() <= new_field_count {
-            self.emit_patch(Patch::ChangeNode { id: *id, delta });
+            self.record_patch(Patch::ChangeNode { id: *id, delta });
         } else {
-            self.emit_patch(Patch::UpsertNode { id: *id, obj });
+            self.record_patch(Patch::UpsertNode { id: *id, obj });
         }
 
         Ok(Field::Object(old))
@@ -275,7 +275,7 @@ impl Graph {
         // Replace case: paths through this id may no longer resolve.
         // Initial-attach case: no paths existed yet (unattached id couldn't
         // produce a valid Pointee::Path at add time), so this is a no-op.
-        self.cascade_invalid_paths_through(id);
+        self.invalidate_dead_paths_through(id);
         Ok(())
     }
 
@@ -286,10 +286,10 @@ impl Graph {
     /// Note the asymmetric cascade:
     /// - `None` (remove) — every `Pointee::Path` through `id` becomes
     ///   invalid (no object to navigate). All paths are killed via
-    ///   [`cascade_path_references_through`].
+    ///   [`invalidate_all_paths_through`].
     /// - `Some(obj)` (replace) — only paths that no longer resolve
     ///   under the new object are killed; surviving fields keep
-    ///   their references via [`cascade_invalid_paths_through`].
+    ///   their references via [`invalidate_dead_paths_through`].
     pub(crate) fn silent_set_attached_obj(
         &mut self,
         id: AttachTargetId,
@@ -301,12 +301,12 @@ impl Graph {
         let old = match new {
             Some(obj) => {
                 let prev = self.entities.insert(id, obj);
-                self.cascade_invalid_paths_through(id);
+                self.invalidate_dead_paths_through(id);
                 prev
             }
             None => {
                 let prev = self.entities.remove(&id);
-                self.cascade_path_references_through(id);
+                self.invalidate_all_paths_through(id);
                 prev
             }
         };
@@ -345,16 +345,16 @@ impl Graph {
 
         match (kind, use_change) {
             (Some(AttachKind::Hyperedge), true) => {
-                self.emit_patch(Patch::ChangeHyperedgeData { id: *id, delta })
+                self.record_patch(Patch::ChangeHyperedgeData { id: *id, delta })
             }
             (Some(AttachKind::Hyperedge), false) => {
-                self.emit_patch(Patch::UpsertHyperedgeData { id: *id, obj })
+                self.record_patch(Patch::UpsertHyperedgeData { id: *id, obj })
             }
             (Some(AttachKind::Edge), true) => {
-                self.emit_patch(Patch::ChangeEdgeData { id: *id, delta })
+                self.record_patch(Patch::ChangeEdgeData { id: *id, delta })
             }
             (Some(AttachKind::Edge), false) => {
-                self.emit_patch(Patch::UpsertEdgeData { id: *id, obj })
+                self.record_patch(Patch::UpsertEdgeData { id: *id, obj })
             }
             // Unreachable — `silent_replace_attached_obj` would have
             // failed otherwise.
@@ -438,7 +438,7 @@ impl Graph {
         new_target: RetargetEdge,
     ) -> Result<(), RetargetError> {
         self.silent_retarget_edge(id, new_target.clone())?;
-        self.emit_patch(Patch::RetargetEdge {
+        self.record_patch(Patch::RetargetEdge {
             id: *id,
             new_target,
         });

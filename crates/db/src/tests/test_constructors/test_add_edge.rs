@@ -11,7 +11,7 @@ fn add_basic_edge() {
     let e1 = g.add_edge(n1, n2).unwrap();
     assert_eq!(
         g.edge(&e1).unwrap(),
-        Triplet {
+        EdgeView {
             id: e1,
             source: Pointee::EntityId(n1),
             target: Pointee::EntityId(n2),
@@ -29,7 +29,7 @@ fn allows_self_loop() {
     let e1 = g.add_edge(n1, n1).unwrap();
     assert_eq!(
         g.edge(&e1).unwrap(),
-        Triplet {
+        EdgeView {
             id: e1,
             source: Pointee::EntityId(n1),
             target: Pointee::EntityId(n1),

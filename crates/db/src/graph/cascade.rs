@@ -66,10 +66,10 @@ impl Graph {
         }
 
         for hid in uses.hyperedges {
-            if let Some(members) = self.hyper_edge.get_mut(&hid) {
+            if let Some(members) = self.hyperedges.get_mut(&hid) {
                 members.remove(pointee);
                 if members.is_empty() {
-                    self.hyper_edge.remove(&hid);
+                    self.hyperedges.remove(&hid);
                     self.entities.remove(&hid);
                     worklist.push(hid);
                 }
@@ -80,7 +80,7 @@ impl Graph {
     /// For one fully-dead entity, drain every pointee that becomes
     /// invalid: `Pointee::EntityId(dead_id)` and every `Pointee::Path`
     /// through it (looked up via `entity_to_path_pointees`).
-    pub(crate) fn cascade_drain_id(&mut self, dead_id: EntityId, worklist: &mut Vec<EntityId>) {
+    pub(crate) fn drain_dead_entity(&mut self, dead_id: EntityId, worklist: &mut Vec<EntityId>) {
         let mut affected: Vec<Pointee> = vec![Pointee::EntityId(dead_id)];
         if let Some(paths) = self.entity_to_path_pointees.remove(&dead_id) {
             affected.extend(paths);
@@ -93,10 +93,10 @@ impl Graph {
     /// Cascade entry point: the given entity has been removed. Walk
     /// every dangling reference and clean it up (recursively, since
     /// removed edges/hyperedges can themselves be referenced).
-    pub(crate) fn cascade_remove_id(&mut self, removed: EntityId) {
+    pub(crate) fn cascade_remove_entity(&mut self, removed: EntityId) {
         let mut worklist: Vec<EntityId> = vec![removed];
         while let Some(dead_id) = worklist.pop() {
-            self.cascade_drain_id(dead_id, &mut worklist);
+            self.drain_dead_entity(dead_id, &mut worklist);
         }
     }
 
@@ -105,7 +105,7 @@ impl Graph {
     /// entity. The entity itself (edge or hyperedge) stays alive, so
     /// `Pointee::EntityId(entity)` references are preserved. Used by
     /// `remove_attached`.
-    pub(crate) fn cascade_path_references_through(&mut self, entity: EntityId) {
+    pub(crate) fn invalidate_all_paths_through(&mut self, entity: EntityId) {
         let Some(paths) = self.entity_to_path_pointees.remove(&entity) else {
             return;
         };
@@ -114,7 +114,7 @@ impl Graph {
             self.drain_pointee_bucket(&pointee, &mut worklist);
         }
         while let Some(dead_id) = worklist.pop() {
-            self.cascade_drain_id(dead_id, &mut worklist);
+            self.drain_dead_entity(dead_id, &mut worklist);
         }
     }
 
@@ -123,7 +123,7 @@ impl Graph {
     /// entity itself stays alive, so `Pointee::EntityId(entity)`
     /// references are preserved. Used by `replace_node` (and any
     /// future field-mutating op).
-    pub(crate) fn cascade_invalid_paths_through(&mut self, entity: EntityId) {
+    pub(crate) fn invalidate_dead_paths_through(&mut self, entity: EntityId) {
         let candidates: Vec<Pointee> = match self.entity_to_path_pointees.get(&entity) {
             Some(set) => set.iter().cloned().collect(),
             None => return,
@@ -141,7 +141,7 @@ impl Graph {
             self.drain_pointee_bucket(p, &mut worklist);
         }
         while let Some(dead_id) = worklist.pop() {
-            self.cascade_drain_id(dead_id, &mut worklist);
+            self.drain_dead_entity(dead_id, &mut worklist);
         }
     }
 }

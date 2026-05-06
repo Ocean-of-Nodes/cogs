@@ -10,7 +10,7 @@ use crate::errors::{
     EdgeNotFoundError, HyperedgeNotFoundError, NoAttachedObjectError, NodeNotFoundError,
 };
 use crate::graph::AttachKind;
-use crate::types::Triplet;
+use crate::types::EdgeView;
 use crate::graph::Graph;
 
 impl Graph {
@@ -25,7 +25,7 @@ impl Graph {
             .entities
             .remove(id)
             .ok_or(NodeNotFoundError { id: *id })?;
-        self.cascade_remove_id(*id);
+        self.cascade_remove_entity(*id);
         Ok(Field::Object(obj))
     }
 
@@ -35,7 +35,7 @@ impl Graph {
     /// Returns the node's previous object as `Field::Object`.
     pub fn remove_node(&mut self, id: &NodeId) -> Result<Field, NodeNotFoundError> {
         let field = self.silent_remove_node(id)?;
-        self.emit_patch(Patch::RemoveNode { id: *id });
+        self.record_patch(Patch::RemoveNode { id: *id });
         Ok(field)
     }
 
@@ -46,7 +46,7 @@ impl Graph {
     pub(crate) fn silent_remove_edge(
         &mut self,
         id: &EdgeId,
-    ) -> Result<Triplet, EdgeNotFoundError> {
+    ) -> Result<EdgeView, EdgeNotFoundError> {
         let (source, target) = self
             .edges
             .remove(id)
@@ -57,7 +57,7 @@ impl Graph {
         // Drop attached object on this edge, if any.
         self.entities.remove(id);
 
-        Ok(Triplet {
+        Ok(EdgeView {
             id: *id,
             source,
             target,
@@ -66,10 +66,10 @@ impl Graph {
 
     /// Remove an edge by id. The edge's reverse-index entries are
     /// cleaned up. Records [`Patch::RemoveEdge`].
-    /// Returns the [`Triplet`] of the removed edge.
-    pub fn remove_edge(&mut self, id: &EdgeId) -> Result<Triplet, EdgeNotFoundError> {
+    /// Returns the [`EdgeView`] of the removed edge.
+    pub fn remove_edge(&mut self, id: &EdgeId) -> Result<EdgeView, EdgeNotFoundError> {
         let res = self.silent_remove_edge(id)?;
-        self.emit_patch(Patch::RemoveEdge { id: *id });
+        self.record_patch(Patch::RemoveEdge { id: *id });
         Ok(res)
     }
 
@@ -78,7 +78,7 @@ impl Graph {
         hid: &HyperedgeId,
     ) -> Result<HashSet<Pointee>, HyperedgeNotFoundError> {
         let members = self
-            .hyper_edge
+            .hyperedges
             .remove(hid)
             .ok_or(HyperedgeNotFoundError { id: *hid })?;
 
@@ -99,7 +99,7 @@ impl Graph {
         // Anything that pointed at `hid` (edges with EntityId/Path
         // endpoints, other hyperedges that had `hid` as member) is
         // now dangling — let the cascade clean it up.
-        self.cascade_remove_id(*hid);
+        self.cascade_remove_entity(*hid);
 
         Ok(members)
     }
@@ -113,7 +113,7 @@ impl Graph {
         hid: &HyperedgeId,
     ) -> Result<HashSet<Pointee>, HyperedgeNotFoundError> {
         let members = self.silent_remove_hyperedge(hid)?;
-        self.emit_patch(Patch::RemoveHyperedge { id: *hid });
+        self.record_patch(Patch::RemoveHyperedge { id: *hid });
         Ok(members)
     }
 
@@ -142,9 +142,9 @@ impl Graph {
         self.silent_remove_attached(target)?;
 
         match kind {
-            Some(AttachKind::Edge) => self.emit_patch(Patch::RemoveEdgeData { id: target }),
+            Some(AttachKind::Edge) => self.record_patch(Patch::RemoveEdgeData { id: target }),
             Some(AttachKind::Hyperedge) => {
-                self.emit_patch(Patch::RemoveHyperedgeData { id: target })
+                self.record_patch(Patch::RemoveHyperedgeData { id: target })
             }
             None => {}
         }

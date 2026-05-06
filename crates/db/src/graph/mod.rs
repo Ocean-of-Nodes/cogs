@@ -11,14 +11,14 @@
 //! - `queries.rs` — non-mutating reads: iterators, getters,
 //!   predicates ([`Graph::is_pointee_exist`], [`Graph::get_type`]).
 //! - `cascade.rs` — recursive-removal helpers (`drain_pointee_bucket`,
-//!   `cascade_remove_id`, etc.).
+//!   `cascade_remove_entity`, etc.).
 //! - `constructors.rs` — [`Graph::add_node`], [`Graph::add_edge`],
 //!   [`Graph::create_hyperedge`] + their `silent_*` cousins.
 //! - `destructors.rs` — `remove_*` family.
 //! - `modifiers.rs` — `attach_obj`, `replace_*`, `retarget_edge`,
 //!   `*_hyperedge_members`.
 //! - `apply_patch.rs` — patch-log replay.
-//! - `listeners.rs` — `emit_patch` + listener stubs.
+//! - `listeners.rs` — `record_patch` + listener stubs.
 //!
 //! ## Invariants
 //!
@@ -31,7 +31,7 @@
 //!   on every mutation; see `tests::test_utils::check_index_invariant`.
 //! - Removing an entity transitively removes everything that
 //!   referenced it (directly via `Pointee::EntityId` or through a
-//!   `Pointee::Path`); see `cascade_remove_id`.
+//!   `Pointee::Path`); see `cascade_remove_entity`.
 //!
 //! ## Replay
 //!
@@ -71,7 +71,7 @@ pub(crate) struct Graph {
     pub(crate) edges: HashMap<EdgeId, (Pointee, Pointee)>,
 
     /// `HyperedgeId → set of members`.
-    pub(crate) hyper_edge: HashMap<HyperedgeId, HashSet<Pointee>>,
+    pub(crate) hyperedges: HashMap<HyperedgeId, HashSet<Pointee>>,
 
     /// Reverse index: for each [`Pointee`] referenced as an
     /// edge-endpoint or hyperedge-member, who references it.

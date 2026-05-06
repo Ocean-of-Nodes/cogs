@@ -5,9 +5,9 @@ fn test_iter_hyperedge() {
     let (g, _n1, _n2, _n3, _n4, _e1, _e2, _e3, _e4, _e5, h) =
         test_utils::create_sample_graph1();
 
-    let actual: Vec<_> = g.iter_hyperedge().collect();
+    let actual: Vec<_> = g.iter_hyperedges().collect();
 
-    // No duplicates — `hyper_edge` is a HashMap, but
+    // No duplicates — `hyperedges` is a HashMap, but
     // assert anyway in case the impl chains in extra
     // sources later.
     let mut counts: HashMap<HyperedgeId, usize> = HashMap::new();
@@ -20,7 +20,7 @@ fn test_iter_hyperedge() {
         .map(|(e, c)| (*e, *c))
         .collect();
     if !duplicates.is_empty() {
-        panic!("iter_hyperedge returned duplicates: {:?}", duplicates);
+        panic!("iter_hyperedges returned duplicates: {:?}", duplicates);
     }
 
     // Exactly the one hyperedge — nodes and edges must

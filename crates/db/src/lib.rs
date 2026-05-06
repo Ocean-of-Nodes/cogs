@@ -4,7 +4,7 @@
 //!
 //! - [`errors`] — every error type returned by `Graph` operations.
 //! - [`types`] — domain taxonomy: `EntityType`, `PointeeKind`,
-//!   `Triplet`.
+//!   `EdgeView`.
 //! - [`object_patch`] — pure helpers over `Object` (apply / diff).
 //! - [`graph`] — the `Graph` struct and all its impls, split by
 //!   responsibility (queries, cascade, constructors, destructors,
@@ -25,7 +25,7 @@ pub(crate) use errors::*;
 pub(crate) use graph::Graph;
 #[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use types::{EntityType, PointeeKind, Triplet};
+pub(crate) use types::{EntityType, PointeeKind, EdgeView};
 
 #[cfg(test)]
 mod tests;

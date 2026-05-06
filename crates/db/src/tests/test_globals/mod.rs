@@ -1,5 +1,5 @@
 //! Tests for graph-wide iterators (`iter_entities`, `iter_edges`,
-//! `iter_nodes`, `iter_hyperedge`, `iter_attached`).
+//! `iter_nodes`, `iter_hyperedges`, `iter_attached`).
 
 use super::*;
 

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use common::*;
 
 use crate::errors::{EntityNotFoundError, GetEdgeError, IncorrectTypeError};
-use crate::types::{EntityType, PointeeKind, Triplet};
+use crate::types::{EntityType, PointeeKind, EdgeView};
 use crate::graph::Graph;
 
 impl Graph {
@@ -19,7 +19,7 @@ impl Graph {
             .keys()
             .copied()
             .chain(self.edges.keys().copied())
-            .chain(self.hyper_edge.keys().copied())
+            .chain(self.hyperedges.keys().copied())
             // We need the hashset for dedup of attached id and hyperedge/edge id.
             .collect::<HashSet<_>>()
             .into_iter()
@@ -41,12 +41,12 @@ impl Graph {
         self.entities
             .keys()
             .copied()
-            .filter(|id| !self.edges.contains_key(id) && !self.hyper_edge.contains_key(id))
+            .filter(|id| !self.edges.contains_key(id) && !self.hyperedges.contains_key(id))
     }
 
     /// Iterate over all hyperedges of the whole graph.
-    pub fn iter_hyperedge(&self) -> impl Iterator<Item = HyperedgeId> {
-        self.hyper_edge.keys().copied()
+    pub fn iter_hyperedges(&self) -> impl Iterator<Item = HyperedgeId> {
+        self.hyperedges.keys().copied()
     }
 
     /// Iterate over ids that have an object attached on top of an
@@ -54,13 +54,13 @@ impl Graph {
     /// [`AttachTargetId`]).
     ///
     /// In other words: entries in `entities` whose id is *also* a
-    /// key in `edges` or `hyper_edge`. This is the complement of
+    /// key in `edges` or `hyperedges`. This is the complement of
     /// [`Graph::iter_nodes`] within `entities`.
     pub fn iter_attached(&self) -> impl Iterator<Item = AttachTargetId> + '_ {
         self.entities
             .keys()
             .copied()
-            .filter(|id| self.edges.contains_key(id) || self.hyper_edge.contains_key(id))
+            .filter(|id| self.edges.contains_key(id) || self.hyperedges.contains_key(id))
     }
 
     // ------------ GETTERS ------------------- //
@@ -71,7 +71,7 @@ impl Graph {
         self.entities.get(id)
     }
 
-    /// Get an edge as a [`Triplet`] (id + source + target).
+    /// Get an edge as a [`EdgeView`] (id + source + target).
     ///
     /// # Errors
     ///
@@ -79,9 +79,9 @@ impl Graph {
     ///   in the graph.
     /// - [`GetEdgeError::IncorrectType`] — `id` exists, but it's a
     ///   different kind of entity (Node, HyperEdge, AttachedObject).
-    pub fn edge(&self, id: &EdgeId) -> Result<Triplet, GetEdgeError> {
+    pub fn edge(&self, id: &EdgeId) -> Result<EdgeView, GetEdgeError> {
         if let Some(pair) = self.edges.get(id) {
-            return Ok(Triplet {
+            return Ok(EdgeView {
                 id: *id,
                 source: pair.0.clone(),
                 target: pair.1.clone(),
@@ -101,7 +101,7 @@ impl Graph {
     /// Direct lookup of a hyperedge's members. `None` if `id` is
     /// not a hyperedge. Companion to [`Graph::edge`].
     pub fn hyperedge_members(&self, id: &HyperedgeId) -> Option<&HashSet<Pointee>> {
-        self.hyper_edge.get(id)
+        self.hyperedges.get(id)
     }
 
     // ------------ PREDICATES / CLASSIFICATION ------------------- //
@@ -110,7 +110,7 @@ impl Graph {
     /// anywhere in the graph.
     ///
     /// Resolution order:
-    /// - id in `entities` AND also in `edges` / `hyper_edge`
+    /// - id in `entities` AND also in `edges` / `hyperedges`
     ///   → `AttachedObject` — the entry in `entities` represents an
     ///   object attached on top of a structural element via
     ///   [`Graph::attach_obj`]. Returning `AttachedObject` here is
@@ -120,12 +120,12 @@ impl Graph {
     ///     - if at least one endpoint is itself an edge or
     ///       hyperedge → `MetaEdge`
     ///     - otherwise → `Edge`
-    /// - id in `hyper_edge` only → `HyperEdge`
+    /// - id in `hyperedges` only → `HyperEdge`
     /// - id in `entities` only → `Node`
     pub(crate) fn get_type(&self, entity: EntityId) -> Option<EntityType> {
         let in_entities = self.entities.contains_key(&entity);
         let in_edges = self.edges.contains_key(&entity);
-        let in_hyper = self.hyper_edge.contains_key(&entity);
+        let in_hyper = self.hyperedges.contains_key(&entity);
 
         if !in_entities && !in_edges && !in_hyper {
             return None;
@@ -141,7 +141,7 @@ impl Graph {
             // it isn't an edge or a hyperedge by definition.
             let is_meta_endpoint = |e: &Pointee| match e {
                 Pointee::EntityId(id) => {
-                    self.edges.contains_key(id) || self.hyper_edge.contains_key(id)
+                    self.edges.contains_key(id) || self.hyperedges.contains_key(id)
                 }
                 Pointee::Path(_) => false,
             };
@@ -184,14 +184,14 @@ impl Graph {
     pub fn is_exist(&self, id: &EntityId) -> bool {
         self.entities.contains_key(id)
             || self.edges.contains_key(id)
-            || self.hyper_edge.contains_key(id)
+            || self.hyperedges.contains_key(id)
     }
 
     /// Walk `local` through `obj`, descending into nested objects
     /// segment by segment. Returns the field reached by the last
     /// segment, or `None` if any segment is missing or attempts to
     /// traverse a non-object field.
-    fn navigate_object<'a>(obj: &'a Object, local: &LocalObjPath) -> Option<&'a Field> {
+    fn walk_path<'a>(obj: &'a Object, local: &LocalObjPath) -> Option<&'a Field> {
         let mut iter = local.iter();
         let first = iter.next()?;
         let mut current = obj.get(first)?;
@@ -218,31 +218,31 @@ impl Graph {
             Pointee::Path(path) => self
                 .entities
                 .get(&path.entity())
-                .and_then(|obj| Self::navigate_object(obj, path.local()))
+                .and_then(|obj| Self::walk_path(obj, path.local()))
                 .is_some(),
         }
     }
 
     /// True when `id` is a bare node (in `entities`, but not in
-    /// `edges`/`hyper_edge`).
+    /// `edges`/`hyperedges`).
     pub(crate) fn is_node(&self, id: &NodeId) -> bool {
         self.entities.contains_key(id)
             && !self.edges.contains_key(id)
-            && !self.hyper_edge.contains_key(id)
+            && !self.hyperedges.contains_key(id)
     }
 
     /// True when `id` is an edge or hyperedge that has an attached
-    /// object (i.e. lives in both `entities` and `edges`/`hyper_edge`).
+    /// object (i.e. lives in both `entities` and `edges`/`hyperedges`).
     pub(crate) fn has_attached_object(&self, id: &AttachTargetId) -> bool {
         self.entities.contains_key(id)
-            && (self.edges.contains_key(id) || self.hyper_edge.contains_key(id))
+            && (self.edges.contains_key(id) || self.hyperedges.contains_key(id))
     }
 
     /// Whether `id` is an edge or a hyperedge — used by attach-style
     /// ops to pick the right `Patch::*EdgeData` / `Patch::*HyperEdgeData`
     /// variant. Returns `None` if `id` isn't a known edge or hyperedge.
     pub(crate) fn attach_kind(&self, id: &AttachTargetId) -> Option<AttachKind> {
-        if self.hyper_edge.contains_key(id) {
+        if self.hyperedges.contains_key(id) {
             Some(AttachKind::Hyperedge)
         } else if self.edges.contains_key(id) {
             Some(AttachKind::Edge)
@@ -269,5 +269,5 @@ impl Graph {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AttachKind {
     Edge,
-    HyperEdge,
+    Hyperedge,
 }

@@ -11,8 +11,8 @@ fn assert_replay_matches(original: &Graph) {
     assert_eq!(original.entities, replayed.entities, "entities mismatch");
     assert_eq!(original.edges, replayed.edges, "edges mismatch");
     assert_eq!(
-        original.hyper_edge, replayed.hyper_edge,
-        "hyper_edge mismatch"
+        original.hyperedges, replayed.hyperedges,
+        "hyperedges mismatch"
     );
 }
 

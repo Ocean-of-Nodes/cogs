@@ -25,7 +25,7 @@ fn removes_and_unregisters_members() {
     let returned = g.remove_hyperedge(&h).unwrap();
 
     assert_eq!(returned, m);
-    assert!(!g.hyper_edge.contains_key(&h));
+    assert!(!g.hyperedges.contains_key(&h));
     assert!(g.is_exist(&n1));
     assert!(g.is_exist(&n2));
     test_utils::check_index_invariant(&g);
@@ -46,7 +46,7 @@ fn cascades_to_referencing_edges() {
 
     g.remove_hyperedge(&h).unwrap();
 
-    assert!(!g.hyper_edge.contains_key(&h));
+    assert!(!g.hyperedges.contains_key(&h));
     assert!(!g.edges.contains_key(&e));
     assert!(g.is_exist(&n2));
     test_utils::check_index_invariant(&g);
@@ -71,8 +71,8 @@ fn cascades_to_parent_hyperedge_when_emptied() {
 
     g.remove_hyperedge(&inner).unwrap();
 
-    assert!(!g.hyper_edge.contains_key(&inner));
-    assert!(!g.hyper_edge.contains_key(&outer));
+    assert!(!g.hyperedges.contains_key(&inner));
+    assert!(!g.hyperedges.contains_key(&outer));
     test_utils::check_index_invariant(&g);
 }
 

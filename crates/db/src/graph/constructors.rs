@@ -23,7 +23,7 @@ impl Graph {
             return Err(CreateHyperedgeError::EmptyHyperedge);
         }
 
-        if self.hyper_edge.contains_key(id) {
+        if self.hyperedges.contains_key(id) {
             return Err(CreateHyperedgeError::HyperedgeAlreadyExists(
                 HyperedgeAlreadyExistsError { id: id.clone() },
             ));
@@ -48,7 +48,7 @@ impl Graph {
                 .insert(*id);
         }
 
-        self.hyper_edge.insert(id.clone(), members);
+        self.hyperedges.insert(id.clone(), members);
         Ok(())
     }
 
@@ -61,7 +61,7 @@ impl Graph {
     ) -> Result<HyperedgeId, CreateHyperedgeError> {
         let id = Uuid::new_v4();
         self.silent_create_hyperedge_with_id(&id, members.clone())?;
-        self.emit_patch(Patch::CreateHyperedge { id, members });
+        self.record_patch(Patch::CreateHyperedge { id, members });
         Ok(id)
     }
 
@@ -83,7 +83,7 @@ impl Graph {
     pub fn add_node(&mut self, obj: Object) -> NodeId {
         let id = Uuid::new_v4();
         let _ = self.silent_add_node_with_id(id, obj.clone());
-        self.emit_patch(Patch::AddNode { id, obj });
+        self.record_patch(Patch::AddNode { id, obj });
         id
     }
 
@@ -145,7 +145,7 @@ impl Graph {
         let target_pointee = target.into();
         let edge_id = Uuid::new_v4();
         self.silent_add_edge_with_id(edge_id, source_pointee.clone(), target_pointee.clone())?;
-        self.emit_patch(Patch::AddEdge {
+        self.record_patch(Patch::AddEdge {
             id: edge_id,
             source: source_pointee,
             target: target_pointee,

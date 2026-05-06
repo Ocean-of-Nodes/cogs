@@ -109,7 +109,7 @@ fn empties_and_kills_hyperedge() {
 
     g.remove_hyperedge_members(h, original).unwrap();
 
-    assert!(!g.hyper_edge.contains_key(&h));
+    assert!(!g.hyperedges.contains_key(&h));
     assert!(!g.edges.contains_key(&e));
     test_utils::check_index_invariant(&g);
 }
