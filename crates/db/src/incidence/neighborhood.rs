@@ -13,7 +13,7 @@ use crate::*;
 /// deduplicated.
 pub fn neighbours(g: &Graph, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
     if !g.is_exist(id) {
-        return Err(EntityNotFoundError(*id));
+        return Err(EntityNotFoundError { id: *id });
     }
 
     let me = Pointee::EntityId(*id);
@@ -49,7 +49,7 @@ pub fn neighbours(g: &Graph, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFou
 /// undirected and not included.
 pub fn out_neighbours(g: &Graph, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
     if !g.is_exist(id) {
-        return Err(EntityNotFoundError(*id));
+        return Err(EntityNotFoundError { id: *id });
     }
 
     let me = Pointee::EntityId(*id);
@@ -71,7 +71,7 @@ pub fn out_neighbours(g: &Graph, id: &EntityId) -> Result<Vec<Pointee>, EntityNo
 /// undirected and not included.
 pub fn in_neighbours(g: &Graph, id: &EntityId) -> Result<Vec<Pointee>, EntityNotFoundError> {
     if !g.is_exist(id) {
-        return Err(EntityNotFoundError(*id));
+        return Err(EntityNotFoundError { id: *id });
     }
 
     let me = Pointee::EntityId(*id);
@@ -166,7 +166,7 @@ mod tests {
     /// Test node connected to node\edge\hyperedge
     #[test]
     fn test_neighbours3() {
-        let (graph, n1, n2, _, _, e_a, e_b, _, _, h) = test_utils::create_semple_graph2();
+        let (graph, n1, n2, _, _, e_a, e_b, _, _, h) = test_utils::create_sample_graph2();
         let neighbours: HashSet<_> =
             neighbours(&graph, &n1).unwrap().into_iter().collect();
 
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_out_neighbours() {
-        let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) = test_utils::create_semple_graph3();
+        let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) = test_utils::create_sample_graph3();
 
         let from_n1: HashSet<_> =
             out_neighbours(&graph, &n1).unwrap().into_iter().collect();
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_in_neighbours() {
-        let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) = test_utils::create_semple_graph3();
+        let (graph, n1, n2, n3, _e1, _e2, _e3, _e4) = test_utils::create_sample_graph3();
 
         let into_n1: HashSet<_> =
             in_neighbours(&graph, &n1).unwrap().into_iter().collect();

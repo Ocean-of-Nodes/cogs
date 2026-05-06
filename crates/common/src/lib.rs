@@ -90,7 +90,7 @@ pub enum ObjectPatch {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
-pub enum RetrargetEdge {
+pub enum RetargetEdge {
     Source(Pointee),
     Target(Pointee),
 }
@@ -125,9 +125,9 @@ pub enum Patch {
     RemoveEdge {
         id: EdgeID,
     },
-    RetrargetEdge {
+    RetargetEdge {
         id: EdgeID,
-        new_target: RetrargetEdge,
+        new_target: RetargetEdge,
     },
     UpsertEdgeData {
         id: EdgeID,

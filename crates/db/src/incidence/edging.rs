@@ -15,7 +15,7 @@ use crate::*;
 /// match is on `Pointee::EntityId(id)` exactly.
 pub fn edges(g: &Graph, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
     if !g.is_exist(id) {
-        return Err(EntityNotFoundError(*id));
+        return Err(EntityNotFoundError { id: *id });
     }
     let me = Pointee::EntityId(*id);
     Ok(g.iter_edges()
@@ -31,7 +31,7 @@ pub fn edges(g: &Graph, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundErro
 /// directional split of [`edges`].
 pub fn out_edges(g: &Graph, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
     if !g.is_exist(id) {
-        return Err(EntityNotFoundError(*id));
+        return Err(EntityNotFoundError { id: *id });
     }
     let me = Pointee::EntityId(*id);
     Ok(g.iter_edges()
@@ -43,7 +43,7 @@ pub fn out_edges(g: &Graph, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFound
 /// directional split of [`edges`].
 pub fn in_edges(g: &Graph, id: &EntityId) -> Result<Vec<EdgeID>, EntityNotFoundError> {
     if !g.is_exist(id) {
-        return Err(EntityNotFoundError(*id));
+        return Err(EntityNotFoundError { id: *id });
     }
     let me = Pointee::EntityId(*id);
     Ok(g.iter_edges()
@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn test_get_edges_1() {
         let (graph, n1, _n2, _n3, _n4, e_a, _e_b, meta_edge, edge_to_h, _h) =
-            test_utils::create_semple_graph2();
+            test_utils::create_sample_graph2();
 
         // n1 is endpoint of three edges:
         //   e_a       (n1 ↔ n2)        — edge to a node
@@ -73,13 +73,13 @@ mod tests {
         assert_eq!(edges, expected);
     }
 
-    // The next two tests use `create_semple_graph3` and exercise
+    // The next two tests use `create_sample_graph3` and exercise
     // the directional split of `edges`. The reversed
     // `e2 = (n3 → n1)` is what makes them informative.
 
     #[test]
     fn test_out_edges() {
-        let (graph, n1, n2, n3, e1, e2, e3, e4) = test_utils::create_semple_graph3();
+        let (graph, n1, n2, n3, e1, e2, e3, e4) = test_utils::create_sample_graph3();
 
         let from_n1: HashSet<_> = out_edges(&graph, &n1).unwrap().into_iter().collect();
         let from_n2: HashSet<_> = out_edges(&graph, &n2).unwrap().into_iter().collect();
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_in_edges() {
-        let (graph, n1, n2, n3, e1, e2, e3, e4) = test_utils::create_semple_graph3();
+        let (graph, n1, n2, n3, e1, e2, e3, e4) = test_utils::create_sample_graph3();
 
         let into_n1: HashSet<_> = in_edges(&graph, &n1).unwrap().into_iter().collect();
         let into_n2: HashSet<_> = in_edges(&graph, &n2).unwrap().into_iter().collect();

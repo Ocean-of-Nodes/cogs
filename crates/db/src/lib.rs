@@ -3,143 +3,322 @@ mod incidence;
 mod methods;
 mod paths;
 
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use uuid::Uuid;
 
 use common::*;
 
-/// Listener is a function that will be called when graph be changed
-type ListernerID = Uuid;
+/// Identifier returned by [`Graph::subscribe_on_change`] and used to
+/// remove the listener via [`Graph::unsubscribe_on_change`].
+type ListenerId = Uuid;
 
-#[derive(Debug)]
-struct HyperEdgeNotFound(HyperEdgeId);
-#[derive(Debug)]
-struct EntityNotFoundError(EntityId);
-#[derive(Debug)]
-struct UnexistentPathError {
-    /// If we pass an nonexistent path, for example
-    /// "/subgraph1/subgraph2/subgraph3",
-    /// where subgpraph1 exist but subgraph2 doesn't,
-    /// then we will return error with valid_path_part = "/subgraph1"
-    valid_path_part: PathBuf,
-}
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) struct NodeAlreadyExistsError(NodeId);
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) struct HyperEdgeAlreadyExistsError(HyperEdgeId);
-#[derive(Debug)]
-struct NodeNotFoundError(NodeId);
-#[derive(Debug)]
-struct EdgeNotFoundError(EdgeID);
+// =====================================================================
+//                            ERROR TYPES
+// =====================================================================
+//
+// Convention:
+//   - All errors are named-field structs/enums.
+//   - Each error carries the data needed to diagnose the failure
+//     (offending id, the conflicting set, etc.).
+//   - Inner data structs end in `Error`; enum variants do not repeat
+//     the suffix.
+
+// ----- Singleton "not found" / "already exists" errors --------------
+
+/// The id is not currently a hyperedge in the graph.
 #[derive(Debug, PartialEq, Eq)]
-struct MissingEndpointsError {
-    missing_endpoints: Vec<Pointee>,
+pub(crate) struct HyperEdgeNotFoundError {
+    pub id: HyperEdgeId,
 }
 
-#[derive(PartialEq, Eq, Debug)]
-struct PointeesNotFound(HashSet<Pointee>);
+/// The id is not a known entity (node, edge, or hyperedge).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct EntityNotFoundError {
+    pub id: EntityId,
+}
 
-#[derive(PartialEq, Eq, Debug)]
-enum CreateHyperEdgeError {
-    PointeesNotFound(PointeesNotFound),
+/// The id is not a known node — it might be missing entirely, or
+/// it might exist as an edge / hyperedge / attached-object id.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NodeNotFoundError {
+    pub id: NodeId,
+}
+
+/// The id is not a known edge.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct EdgeNotFoundError {
+    pub id: EdgeID,
+}
+
+/// `add_node` (or replay of the same) collided with an existing id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NodeAlreadyExistsError {
+    pub id: NodeId,
+}
+
+/// `silent_create_hyperedge_with_id` collided with an existing id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct HyperEdgeAlreadyExistsError {
+    pub id: HyperEdgeId,
+}
+
+/// `silent_add_edge_with_id` collided with an existing id.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct EdgeAlreadyExistsError {
+    pub id: EdgeID,
+}
+
+/// One or both endpoints of an edge being added do not currently
+/// resolve to an existing pointee.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct MissingEndpointsError {
+    /// The endpoints that failed `is_pointee_exist`.
+    pub missing_endpoints: Vec<Pointee>,
+}
+
+/// One or more pointees passed to a hyperedge op do not exist.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PointeesNotFoundError {
+    pub pointees: HashSet<Pointee>,
+}
+
+/// `add_hyperedge_members` was asked to insert pointees that are
+/// already members of the hyperedge.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct MembersAlreadyExistError {
+    pub members: Vec<Pointee>,
+}
+
+/// `remove_hyperedge_members` was asked to drop pointees that are
+/// not currently members of the hyperedge.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct MembersNotInHyperedgeError {
+    pub members: Vec<Pointee>,
+}
+
+/// Type-check failure: the id resolved to an entity whose kind is
+/// not in the operation's accepted set.
+#[derive(Debug)]
+pub(crate) struct IncorrectTypeError {
+    /// The id whose type didn't match.
+    pub entity_id: EntityId,
+    /// Human-readable list of accepted entity types.
+    pub expected_type: Vec<String>,
+    /// Human-readable description of the actual type.
+    pub actual_type: String,
+}
+
+/// `attach_obj` was called on an id that doesn't exist at all.
+#[derive(Debug)]
+pub(crate) struct AttachTargetNotFoundError {
+    pub id: AttachTargetID,
+}
+
+/// `remove_attached` / `replace_attached_obj` was called on an id
+/// that is not a current attach target — either the id doesn't
+/// exist, or it exists as a bare structural element (no attached
+/// object) or as a node.
+#[derive(Debug)]
+pub(crate) struct NoAttachedObjectError {
+    pub id: AttachTargetID,
+}
+
+/// `retarget_edge` was given a new endpoint that doesn't resolve.
+#[derive(Debug)]
+pub(crate) struct InvalidRetargetError {
+    pub edge_id: EdgeID,
+    pub new_target: RetargetEdge,
+}
+
+// ----- Composite enum errors ----------------------------------------
+
+/// Errors returned by [`Graph::create_hyperedge`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CreateHyperEdgeError {
+    /// At least one member pointee doesn't exist.
+    PointeesNotFound(PointeesNotFoundError),
+    /// The chosen id is already taken by another hyperedge.
     HyperEdgeAlreadyExists(HyperEdgeAlreadyExistsError),
+    /// Empty membership is rejected — every hyperedge has ≥1 member.
     EmptyHyperEdge,
 }
 
-#[derive(Debug)]
-struct IncorrectTypeError {
-    node_id: NodeId,
-    expected_type: Vec<String>,
-    actual_type: String,
-}
-
+/// Errors returned by [`Graph::add_edge`].
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum AddEdgeError {
-    MissingEndpointsError(MissingEndpointsError),
-    EdgeAlreadyExists(EdgeID),
+    MissingEndpoints(MissingEndpointsError),
+    EdgeAlreadyExists(EdgeAlreadyExistsError),
 }
 
+/// Errors returned by [`Graph::retarget_edge`].
 #[derive(Debug)]
-enum RetargetError {
-    EdgeNotFound(EdgeID),
-    InvalidTarget(RetrargetEdge),
+pub(crate) enum RetargetError {
+    EdgeNotFound(EdgeNotFoundError),
+    InvalidTarget(InvalidRetargetError),
 }
 
+/// Errors returned by [`Graph::attach_obj`].
 #[derive(Debug)]
-enum AttachNodeError {
-    AttachTargetNotFound,
+pub(crate) enum AttachObjectError {
+    /// Target id doesn't exist anywhere in the graph.
+    AttachTargetNotFound(AttachTargetNotFoundError),
+    /// Target exists but isn't a valid attach target (e.g. it's a
+    /// node, or already has an attached object — see
+    /// `replace_attached_obj` for the latter).
     IncorrectType(IncorrectTypeError),
 }
 
+/// Errors returned by [`Graph::edge`].
 #[derive(Debug)]
-enum GetEdgeError {
+pub(crate) enum GetEdgeError {
+    /// Id doesn't exist in the graph.
     NotFound(EntityNotFoundError),
+    /// Id exists but isn't an edge.
     IncorrectType(IncorrectTypeError),
 }
 
+/// Errors returned by [`Graph::add_hyperedge_members`].
 #[derive(Debug)]
-struct MembersAlreadyExist(Vec<Pointee>);
-
-#[derive(Debug)]
-enum AddHyperedgeMembers {
-    NotFound(EntityNotFoundError),
-    MembersAlreadyExist(MembersAlreadyExist),
-    PointeesNotFound(PointeesNotFound),
+pub(crate) enum AddHyperedgeMembersError {
+    /// The hyperedge id doesn't exist.
+    HyperEdgeNotFound(HyperEdgeNotFoundError),
+    /// Some passed pointees are already members.
+    MembersAlreadyExist(MembersAlreadyExistError),
+    /// Some passed pointees don't exist as graph entities.
+    PointeesNotFound(PointeesNotFoundError),
 }
 
+/// Errors returned by [`Graph::remove_hyperedge_members`].
 #[derive(Debug)]
-enum RemoveHyperedgeMembers {/* TODO */}
-
-#[derive(Debug)]
-enum RemoveAttached {
-    NodeOrAttachedNotFound,
+pub(crate) enum RemoveHyperedgeMembersError {
+    /// The hyperedge id doesn't exist.
+    HyperEdgeNotFound(HyperEdgeNotFoundError),
+    /// Some passed pointees aren't current members.
+    MembersNotInHyperedge(MembersNotInHyperedgeError),
 }
 
-/// Errors returned while applying an [`ObjectDelta`] in-place.
+// ----- Object-patch and high-level errors ---------------------------
+
+/// Errors returned while applying a single [`ObjectPatch`] to an
+/// `Object`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ObjectPatchError {
     /// `AddField` on a name that already exists.
-    FieldAlreadyExists(String),
-    /// `RemoveField`/`ReplaceField`/`ArrayDelta` referencing a name
-    /// that's not in the object.
-    FieldNotFound(String),
-    /// A path segment landed on a non-`Object` field.
-    NotAnObject(String),
-    /// `ArrayDelta` named a field that is not a `Field::Array`.
-    NotAnArray(String),
-    /// An array index in `removed_indices`/`added_fields` is past
-    /// the array's bounds at apply time.
-    IndexOutOfBounds(usize),
-    /// `ChangeNode`/`ChangeData` was given an empty delta vector.
-    EmptyDeltaVector,
+    FieldAlreadyExists { field_name: String },
+    /// `RemoveField` / `ArrayPatch` / `SubObjectPatch` referenced a
+    /// name that's not in the object.
+    FieldNotFound { field_name: String },
+    /// Path navigation landed on a non-`Object` field.
+    NotAnObject { field_name: String },
+    /// `ArrayPatch` named a field that is not a `Field::Array`.
+    NotAnArray { field_name: String },
+    /// An array index is past the array's bounds at apply time.
+    IndexOutOfBounds { index: usize },
 }
 
-/// Errors returned while applying high-level object changes.
+/// Errors returned by [`Graph::obj_apply_patch`].
 #[derive(Debug)]
 pub(crate) enum DeltaError {
-    /// The target entity isn't in the graph (or, for `ChangeData`,
-    /// has no attached object).
-    NotFound(EntityId),
-    /// Failure inside the delta application itself.
+    /// The id has no `Object` to patch (could be unknown, or an
+    /// edge/hyperedge with no attached object).
+    NotFound(EntityNotFoundError),
+    /// Failure inside the inner patch application.
     Delta(ObjectPatchError),
 }
 
-/// Errors returned by [`Graph::apply_patch`].
+/// Errors returned by [`Graph::apply_patch`] — wraps the failure of
+/// whichever silent op the offending [`Patch`] mapped to.
 #[derive(Debug)]
 pub(crate) enum ApplyPatchError {
     NodeAlreadyExists(NodeAlreadyExistsError),
     AddEdge(AddEdgeError),
-    CreateHyperEdgeError(CreateHyperEdgeError),
+    CreateHyperEdge(CreateHyperEdgeError),
     NodeNotFound(NodeNotFoundError),
     EdgeNotFound(EdgeNotFoundError),
-    HyperEdgeNotFound(HyperEdgeNotFound),
+    HyperEdgeNotFound(HyperEdgeNotFoundError),
     Retarget(RetargetError),
     Change(DeltaError),
-    AddHyperedgeMembers(AddHyperedgeMembers),
-    RemoveHyperedgeMembers(RemoveHyperedgeMembers),
-    RemoveAttached(RemoveAttached),
+    AddHyperedgeMembers(AddHyperedgeMembersError),
+    RemoveHyperedgeMembers(RemoveHyperedgeMembersError),
+    NoAttachedObject(NoAttachedObjectError),
+    Attach(AttachObjectError),
+}
+
+// ----- From impls: enable `?`-conversion in `apply_patch` -----------
+//
+// One impl per silent-op error → ApplyPatchError variant. Lets us
+// write `self.silent_*(...)?` instead of `.map_err(ApplyPatchError::*)?`.
+
+impl From<NodeAlreadyExistsError> for ApplyPatchError {
+    fn from(e: NodeAlreadyExistsError) -> Self {
+        Self::NodeAlreadyExists(e)
+    }
+}
+
+impl From<AddEdgeError> for ApplyPatchError {
+    fn from(e: AddEdgeError) -> Self {
+        Self::AddEdge(e)
+    }
+}
+
+impl From<CreateHyperEdgeError> for ApplyPatchError {
+    fn from(e: CreateHyperEdgeError) -> Self {
+        Self::CreateHyperEdge(e)
+    }
+}
+
+impl From<NodeNotFoundError> for ApplyPatchError {
+    fn from(e: NodeNotFoundError) -> Self {
+        Self::NodeNotFound(e)
+    }
+}
+
+impl From<EdgeNotFoundError> for ApplyPatchError {
+    fn from(e: EdgeNotFoundError) -> Self {
+        Self::EdgeNotFound(e)
+    }
+}
+
+impl From<HyperEdgeNotFoundError> for ApplyPatchError {
+    fn from(e: HyperEdgeNotFoundError) -> Self {
+        Self::HyperEdgeNotFound(e)
+    }
+}
+
+impl From<RetargetError> for ApplyPatchError {
+    fn from(e: RetargetError) -> Self {
+        Self::Retarget(e)
+    }
+}
+
+impl From<DeltaError> for ApplyPatchError {
+    fn from(e: DeltaError) -> Self {
+        Self::Change(e)
+    }
+}
+
+impl From<AddHyperedgeMembersError> for ApplyPatchError {
+    fn from(e: AddHyperedgeMembersError) -> Self {
+        Self::AddHyperedgeMembers(e)
+    }
+}
+
+impl From<RemoveHyperedgeMembersError> for ApplyPatchError {
+    fn from(e: RemoveHyperedgeMembersError) -> Self {
+        Self::RemoveHyperedgeMembers(e)
+    }
+}
+
+impl From<NoAttachedObjectError> for ApplyPatchError {
+    fn from(e: NoAttachedObjectError) -> Self {
+        Self::NoAttachedObject(e)
+    }
+}
+
+impl From<AttachObjectError> for ApplyPatchError {
+    fn from(e: AttachObjectError) -> Self {
+        Self::Attach(e)
+    }
 }
 
 /// Triplet is a link beetween two pointees
@@ -213,14 +392,120 @@ impl std::fmt::Display for EntityType {
     }
 }
 
+/// Apply a sequence of `ObjectPatch` to an `Object` in place. Used by
+/// `obj_apply_patch` to replay `Change*` patches.
+fn apply_object_patches(obj: &mut Object, patches: Vec<ObjectPatch>) -> Result<(), ObjectPatchError> {
+    for p in patches {
+        match p {
+            ObjectPatch::AddField { name, field } => {
+                if obj.contains_key(&name) {
+                    return Err(ObjectPatchError::FieldAlreadyExists { field_name: name });
+                }
+                obj.insert(name, field);
+            }
+            ObjectPatch::RemoveField { name } => {
+                if obj.remove(&name).is_none() {
+                    return Err(ObjectPatchError::FieldNotFound { field_name: name });
+                }
+            }
+            ObjectPatch::UpsertField { name, field } => {
+                obj.insert(name, field);
+            }
+            ObjectPatch::ArrayPatch {
+                name,
+                removed_indices,
+                added_fields,
+            } => {
+                let arr = match obj.get_mut(&name) {
+                    Some(Field::Array(a)) => a,
+                    Some(_) => return Err(ObjectPatchError::NotAnArray { field_name: name }),
+                    None => return Err(ObjectPatchError::FieldNotFound { field_name: name }),
+                };
+                for &idx in &removed_indices {
+                    if idx >= arr.len() {
+                        return Err(ObjectPatchError::IndexOutOfBounds { index: idx });
+                    }
+                }
+                let mut to_remove = removed_indices;
+                to_remove.sort_unstable_by(|a, b| b.cmp(a));
+                for idx in to_remove {
+                    arr.remove(idx);
+                }
+                let mut to_add = added_fields;
+                to_add.sort_by_key(|(idx, _)| *idx);
+                for (idx, field) in to_add {
+                    if idx > arr.len() {
+                        return Err(ObjectPatchError::IndexOutOfBounds { index: idx });
+                    }
+                    arr.insert(idx, field);
+                }
+            }
+            ObjectPatch::SubObjectPatch { path, delta } => {
+                let mut cursor: &mut Object = obj;
+                for seg in &path {
+                    match cursor.get_mut(seg) {
+                        Some(Field::Object(inner)) => cursor = inner,
+                        Some(_) => {
+                            return Err(ObjectPatchError::NotAnObject {
+                                field_name: seg.to_string(),
+                            })
+                        }
+                        None => {
+                            return Err(ObjectPatchError::FieldNotFound {
+                                field_name: seg.to_string(),
+                            })
+                        }
+                    }
+                }
+                apply_object_patches(cursor, delta)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Shallow diff: produce a patch sequence that turns `old` into `new`.
+/// Used by `replace_node` to decide whether emitting a delta is more
+/// compact than emitting the full object via Upsert.
+fn diff_object(old: &Object, new: &Object) -> Vec<ObjectPatch> {
+    let mut patches = Vec::new();
+    for k in old.keys() {
+        if !new.contains_key(k) {
+            patches.push(ObjectPatch::RemoveField { name: k.clone() });
+        }
+    }
+    for (k, v) in new {
+        match old.get(k) {
+            Some(old_v) if old_v == v => {}
+            Some(_) => patches.push(ObjectPatch::UpsertField {
+                name: k.clone(),
+                field: v.clone(),
+            }),
+            None => patches.push(ObjectPatch::AddField {
+                name: k.clone(),
+                field: v.clone(),
+            }),
+        }
+    }
+    patches
+}
+
+/// Reverse-index bucket: which edges/hyperedges currently point at
+/// a given [`Pointee`]. Maintained by every mutating op so cascade
+/// removal can find dangling references in O(in-degree).
 #[derive(Default)]
 struct PointeeUses {
+    /// Edges whose `source` is this pointee.
     edges_as_source: HashSet<EdgeID>,
+    /// Edges whose `target` is this pointee.
     edges_as_target: HashSet<EdgeID>,
+    /// Hyperedges that include this pointee as a member.
     hyperedges: HashSet<HyperEdgeId>,
 }
 
 impl PointeeUses {
+    /// True when no structural element references this pointee. The
+    /// bucket is dropped from the index whenever this is true.
     fn is_empty(&self) -> bool {
         self.edges_as_source.is_empty()
             && self.edges_as_target.is_empty()
@@ -228,25 +513,49 @@ impl PointeeUses {
     }
 }
 
+/// In-memory graph storing nodes, edges, hyperedges, optional
+/// attached `Object`s on edges/hyperedges, and the patch log of
+/// every mutation.
+///
+/// ## Invariants
+///
+/// - Every edge endpoint resolves at insertion time
+///   ([`Graph::is_pointee_exist`]).
+/// - Every hyperedge has at least one member; cascade-removing the
+///   last member deletes the hyperedge.
+/// - The reverse indexes (`pointee_uses`, `entity_to_path_pointees`)
+///   are derivable from the structural maps and are kept consistent
+///   on every mutation; see `tests::test_utils::check_index_invariant`.
+/// - Removing an entity transitively removes everything that
+///   referenced it (directly via `Pointee::EntityId` or through a
+///   `Pointee::Path`); see [`Graph::cascade_remove_id`].
+///
+/// ## Replay
+///
+/// Every public mutation appends a [`Patch`] to `events`. Replaying
+/// the recorded log via [`Graph::apply_patch`] on a fresh graph
+/// reconstructs an identical state (verified by round-trip tests in
+/// `mod test_apply_patch`).
 #[derive(Default)]
 struct Graph {
-    /// Hold graph object (nodes and attached object)
+    /// Object attached to each id — nodes always, edges/hyperedges
+    /// only when [`Graph::attach_obj`] has been called on them.
     entities: HashMap<EntityId, Object>,
 
-    /// Hold graph edges
+    /// `EdgeID → (source, target)` pair.
     edges: HashMap<EdgeID, (Pointee, Pointee)>,
 
-    /// Hold hyperedges
+    /// `HyperEdgeId → set of members`.
     hyper_edge: HashMap<HyperEdgeId, HashSet<Pointee>>,
 
-    /// Pointee → {
-    ///     edges-as-source,
-    ///     edges-as-target,
-    ///     hyperedges of which it is a member,
-    /// }
+    /// Reverse index: for each [`Pointee`] referenced as an
+    /// edge-endpoint or hyperedge-member, who references it.
     pointee_uses: HashMap<Pointee, PointeeUses>,
 
-    /// EntityId --- Pointee
+    /// Secondary index: for each entity, every `Pointee::Path`
+    /// rooted at it that's currently live in `pointee_uses`. Lets
+    /// cascade removal find paths through an entity in
+    /// O(in-degree-by-paths) instead of scanning the whole index.
     entity_to_path_pointees: HashMap<EntityId, HashSet<Pointee>>,
 
     /// Patch log
@@ -357,9 +666,9 @@ impl Graph {
         }
 
         match self.get_type(*id) {
-            None => Err(GetEdgeError::NotFound(EntityNotFoundError(*id))),
+            None => Err(GetEdgeError::NotFound(EntityNotFoundError { id: *id })),
             Some(ty) => Err(GetEdgeError::IncorrectType(IncorrectTypeError {
-                node_id: *id,
+                entity_id: *id,
                 expected_type: vec!["Edge".to_string()],
                 actual_type: ty.to_string(),
             })),
@@ -513,7 +822,7 @@ impl Graph {
 
         if self.hyper_edge.contains_key(id) {
             return Err(CreateHyperEdgeError::HyperEdgeAlreadyExists(
-                HyperEdgeAlreadyExistsError(id.clone()),
+                HyperEdgeAlreadyExistsError { id: id.clone() },
             ));
         }
 
@@ -525,37 +834,37 @@ impl Graph {
         }
 
         if !unexist.is_empty() {
-            return Err(CreateHyperEdgeError::PointeesNotFound(PointeesNotFound(unexist)));
+            return Err(CreateHyperEdgeError::PointeesNotFound(
+                PointeesNotFoundError { pointees: unexist },
+            ));
+        }
+
+        // Update reverse index BEFORE storing — `track_pointee_entity`
+        // needs the original `members` set; we register each member's
+        // bucket and entity-to-paths secondary.
+        for member in &members {
+            self.track_pointee_entity(member);
+            self.pointee_uses
+                .entry(member.clone())
+                .or_default()
+                .hyperedges
+                .insert(*id);
         }
 
         self.hyper_edge.insert(id.clone(), members);
         Ok(())
     }
 
+    /// Create a hyperedge containing the given non-empty set of
+    /// existing pointees. Generates a new id and records
+    /// [`Patch::CreateHyperEdge`].
     pub fn create_hyperedge(
         &mut self,
         members: HashSet<Pointee>,
     ) -> Result<HyperEdgeId, CreateHyperEdgeError> {
-        // ---- Create hyperedge ----
         let id = Uuid::new_v4();
         self.silent_create_hyperedge_with_id(&id, members.clone())?;
-
-        // ---- Indexes -----
-        for member in members.iter() {
-            self.track_pointee_entity(member);
-            self.pointee_uses
-                .entry(member.clone())
-                .or_default()
-                .hyperedges
-                .insert(id);
-        }
-
-        // ---- Record Patch ----
-        self.record_patch(Patch::CreateHyperEdge {
-            id: id.clone(),
-            members,
-        });
-
+        self.emit_patch(Patch::CreateHyperEdge { id, members });
         Ok(id)
     }
 
@@ -565,17 +874,19 @@ impl Graph {
         obj: Object,
     ) -> Result<(), NodeAlreadyExistsError> {
         if self.entities.contains_key(&id) {
-            return Err(NodeAlreadyExistsError(id));
+            return Err(NodeAlreadyExistsError { id });
         }
 
         self.entities.insert(id, obj);
         Ok(())
     }
 
+    /// Add a fresh node carrying `obj`. Generates a new id and
+    /// records [`Patch::AddNode`] in the patch log.
     pub fn add_node(&mut self, obj: Object) -> NodeId {
         let id = Uuid::new_v4();
         self.silent_add_node_with_id(id, obj.clone());
-        self.record_patch(Patch::AddNode { id, obj: obj });
+        self.emit_patch(Patch::AddNode { id, obj: obj });
         id
     }
 
@@ -595,52 +906,53 @@ impl Graph {
             if !target_exists {
                 missing_endpoints.push(target);
             }
-            return Err(AddEdgeError::MissingEndpointsError(MissingEndpointsError {
+            return Err(AddEdgeError::MissingEndpoints(MissingEndpointsError {
                 missing_endpoints,
             }));
         }
 
         if self.edges.contains_key(&id) {
-            return Err(AddEdgeError::EdgeAlreadyExists(id));
+            return Err(AddEdgeError::EdgeAlreadyExists(EdgeAlreadyExistsError {
+                id,
+            }));
         }
+
+        // Update reverse index alongside the structural insert.
+        self.track_pointee_entity(&source);
+        self.pointee_uses
+            .entry(source.clone())
+            .or_default()
+            .edges_as_source
+            .insert(id);
+
+        self.track_pointee_entity(&target);
+        self.pointee_uses
+            .entry(target.clone())
+            .or_default()
+            .edges_as_target
+            .insert(id);
 
         self.edges.insert(id, (source, target));
         Ok(())
     }
 
+    /// Add an edge from `source` to `target`. Both endpoints must
+    /// resolve via [`Graph::is_pointee_exist`] at insertion time.
+    /// Generates a new id and records [`Patch::AddEdge`].
     pub fn add_edge(
         &mut self,
         source: impl Into<Pointee>,
         target: impl Into<Pointee>,
     ) -> Result<EdgeID, AddEdgeError> {
-        // --- Creating ----
         let source_pointee = source.into();
         let target_pointee = target.into();
         let edge_id = Uuid::new_v4();
         self.silent_add_edge_with_id(edge_id, source_pointee.clone(), target_pointee.clone())?;
-
-        // ---- Indexes ----
-        self.track_pointee_entity(&source_pointee);
-        self.pointee_uses
-            .entry(source_pointee.clone())
-            .or_default()
-            .edges_as_source
-            .insert(edge_id);
-
-        self.track_pointee_entity(&target_pointee);
-        self.pointee_uses
-            .entry(target_pointee.clone())
-            .or_default()
-            .edges_as_target
-            .insert(edge_id);
-
-        // ---- Record patch ----
-        self.record_patch(Patch::AddEdge {
+        self.emit_patch(Patch::AddEdge {
             id: edge_id,
             source: source_pointee,
             target: target_pointee,
         });
-
         Ok(edge_id)
     }
 
@@ -736,23 +1048,79 @@ impl Graph {
         }
     }
 
+    /// After mutating `entity`'s object, drop every `Pointee::Path`
+    /// through it that no longer resolves under the new shape. The
+    /// entity itself stays alive, so `Pointee::EntityId(entity)`
+    /// references are preserved. Used by `replace_node` (and any
+    /// future field-mutating op).
+    fn cascade_invalid_paths_through(&mut self, entity: EntityId) {
+        let candidates: Vec<Pointee> = match self.entity_to_path_pointees.get(&entity) {
+            Some(set) => set.iter().cloned().collect(),
+            None => return,
+        };
+        let dead: Vec<Pointee> = candidates
+            .into_iter()
+            .filter(|p| !self.is_pointee_exist(p))
+            .collect();
+        if dead.is_empty() {
+            return;
+        }
+        let mut worklist: Vec<EntityId> = Vec::new();
+        for p in &dead {
+            self.untrack_pointee_entity(p);
+            self.drain_pointee_bucket(p, &mut worklist);
+        }
+        while let Some(dead_id) = worklist.pop() {
+            self.cascade_drain_id(dead_id, &mut worklist);
+        }
+    }
+
     fn silent_remove_node(&mut self, id: &NodeId) -> Result<Field, NodeNotFoundError> {
         if !self.is_node(id) {
-            return Err(NodeNotFoundError(*id));
+            return Err(NodeNotFoundError { id: *id });
         }
-        let obj = self.entities.remove(id).ok_or(NodeNotFoundError(*id))?;
+        let obj = self
+            .entities
+            .remove(id)
+            .ok_or(NodeNotFoundError { id: *id })?;
         self.cascade_remove_id(*id);
         Ok(Field::Object(obj))
     }
 
+    /// Remove a node and cascade-delete every edge / hyperedge that
+    /// referenced it (directly or via a `Pointee::Path`). Records
+    /// one [`Patch::RemoveNode`] regardless of cascade depth.
+    /// Returns the node's previous object as `Field::Object`.
     pub fn remove_node(&mut self, id: &NodeId) -> Result<Field, NodeNotFoundError> {
         let field = self.silent_remove_node(id)?;
-        self.record_patch(Patch::RemoveNode { id: *id });
+        self.emit_patch(Patch::RemoveNode { id: *id });
         Ok(field)
     }
 
-    pub fn silent_remove_edge(&mut self, id: &EdgeID) -> Result<Triplet, EdgeNotFoundError> {
-        let (source, target) = self.edges.remove(id).ok_or(EdgeNotFoundError(*id))?;
+    fn silent_remove_edge(&mut self, id: &EdgeID) -> Result<Triplet, EdgeNotFoundError> {
+        let (source, target) = self
+            .edges
+            .remove(id)
+            .ok_or(EdgeNotFoundError { id: *id })?;
+
+        // Strip eid from both endpoints' buckets; clean up empty buckets.
+        for (endpoint, is_source) in [(&source, true), (&target, false)] {
+            if let Some(bucket) = self.pointee_uses.get_mut(endpoint) {
+                if is_source {
+                    bucket.edges_as_source.remove(id);
+                } else {
+                    bucket.edges_as_target.remove(id);
+                }
+                if bucket.is_empty() {
+                    self.pointee_uses.remove(endpoint);
+                    self.untrack_pointee_entity(endpoint);
+                }
+            }
+        }
+
+        // Drop attached object on this edge, if any.
+        self.entities.remove(id);
+
         Ok(Triplet {
             id: *id,
             source,
@@ -760,17 +1128,23 @@ impl Graph {
         })
     }
 
+    /// Remove an edge by id. The edge's reverse-index entries are
+    /// cleaned up. Records [`Patch::RemoveEdge`].
+    /// Returns the [`Triplet`] of the removed edge.
     pub fn remove_edge(&mut self, id: &EdgeID) -> Result<Triplet, EdgeNotFoundError> {
         let res = self.silent_remove_edge(id)?;
-        self.record_patch(Patch::RemoveEdge { id: *id });
+        self.emit_patch(Patch::RemoveEdge { id: *id });
         Ok(res)
     }
 
     fn silent_remove_hyperedge(
         &mut self,
         hid: &HyperEdgeId,
-    ) -> Result<HashSet<Pointee>, HyperEdgeNotFound> {
-        let members = self.hyper_edge.remove(hid).ok_or(HyperEdgeNotFound(*hid))?;
+    ) -> Result<HashSet<Pointee>, HyperEdgeNotFoundError> {
+        let members = self
+            .hyper_edge
+            .remove(hid)
+            .ok_or(HyperEdgeNotFoundError { id: *hid })?;
 
         // Strip `hid` from each member's reverse-index bucket.
         for member in &members {
@@ -794,12 +1168,16 @@ impl Graph {
         Ok(members)
     }
 
+    /// Remove a hyperedge by id. Cascades to anything that
+    /// referenced it (edges, parent hyperedges that lose this
+    /// member and become empty). Records one
+    /// [`Patch::RemoveHyperEdge`]. Returns the previous member set.
     pub fn remove_hyperedge(
         &mut self,
         hid: &HyperEdgeId,
-    ) -> Result<HashSet<Pointee>, HyperEdgeNotFound> {
+    ) -> Result<HashSet<Pointee>, HyperEdgeNotFoundError> {
         let members = self.silent_remove_hyperedge(hid)?;
-        self.record_patch(Patch::RemoveHyperEdge { id: *hid });
+        self.emit_patch(Patch::RemoveHyperEdge { id: *hid });
         Ok(members)
     }
 
@@ -807,11 +1185,14 @@ impl Graph {
     /// structural element itself stays alive; only the `Object`
     /// stored on top of it is dropped, along with any `Pointee::Path`
     /// references that depended on the attached object's fields.
-    pub fn silent_remove_attached(&mut self, target: AttachTargetID) -> Result<(), RemoveAttached> {
+    pub fn silent_remove_attached(
+        &mut self,
+        target: AttachTargetID,
+    ) -> Result<(), NoAttachedObjectError> {
         let is_attach_target = self.entities.contains_key(&target)
             && (self.edges.contains_key(&target) || self.hyper_edge.contains_key(&target));
         if !is_attach_target {
-            return Err(RemoveAttached::NodeOrAttachedNotFound);
+            return Err(NoAttachedObjectError { id: target });
         }
 
         self.entities.remove(&target);
@@ -819,7 +1200,10 @@ impl Graph {
         Ok(())
     }
 
-    pub fn remove_attached(&mut self, target: AttachTargetID) -> Result<(), RemoveAttached> {
+    pub fn remove_attached(
+        &mut self,
+        target: AttachTargetID,
+    ) -> Result<(), NoAttachedObjectError> {
         // Determine the patch variant *before* the silent op — both
         // structures stay alive after the call, but resolving the
         // type is conceptually a pre-condition.
@@ -829,9 +1213,9 @@ impl Graph {
         self.silent_remove_attached(target)?;
 
         if is_edge {
-            self.record_patch(Patch::RemoveEdgeData { id: target });
+            self.emit_patch(Patch::RemoveEdgeData { id: target });
         } else if is_hyper {
-            self.record_patch(Patch::RemoveHyperEdgeData { id: target });
+            self.emit_patch(Patch::RemoveHyperEdgeData { id: target });
         }
         Ok(())
     }
@@ -840,18 +1224,22 @@ impl Graph {
 
     /* ------------ START MODIFIERS ----------- */
 
-    pub fn attach_obj(
+    fn silent_attach_obj(
         &mut self,
         target: AttachTargetID,
         obj: Object,
-    ) -> Result<(), AttachNodeError> {
+    ) -> Result<(), AttachObjectError> {
         let ty = match self.get_type(target) {
             Some(t) => t,
-            None => return Err(AttachNodeError::AttachTargetNotFound),
+            None => {
+                return Err(AttachObjectError::AttachTargetNotFound(
+                    AttachTargetNotFoundError { id: target },
+                ))
+            }
         };
         if !ty.is_attach_target() {
-            return Err(AttachNodeError::IncorrectType(IncorrectTypeError {
-                node_id: target,
+            return Err(AttachObjectError::IncorrectType(IncorrectTypeError {
+                entity_id: target,
                 expected_type: vec![
                     EntityType::Edge.to_string(),
                     EntityType::HyperEdge.to_string(),
@@ -865,13 +1253,36 @@ impl Graph {
         Ok(())
     }
 
+    pub fn attach_obj(
+        &mut self,
+        target: AttachTargetID,
+        obj: Object,
+    ) -> Result<(), AttachObjectError> {
+        // Resolve target type *before* mutating so we can pick the
+        // right patch variant. After silent_attach_obj succeeds, the
+        // type is guaranteed to be one of the attach-target kinds.
+        let is_hyper = self.hyper_edge.contains_key(&target);
+
+        self.silent_attach_obj(target, obj.clone())?;
+
+        if is_hyper {
+            self.emit_patch(Patch::UpsertHyperEdgeData { id: target, obj });
+        } else {
+            // MetaEdge is structurally an edge, so it lives in `self.edges`.
+            self.emit_patch(Patch::UpsertEdgeData { id: target, obj });
+        }
+        Ok(())
+    }
+
     fn silent_add_hyperedge_members(
         &mut self,
         id: HyperEdgeId,
         m: HashSet<Pointee>,
-    ) -> Result<(), AddHyperedgeMembers> {
+    ) -> Result<(), AddHyperedgeMembersError> {
         if !self.hyper_edge.contains_key(&id) {
-            return Err(AddHyperedgeMembers::NotFound(EntityNotFoundError(id)));
+            return Err(AddHyperedgeMembersError::HyperEdgeNotFound(
+                HyperEdgeNotFoundError { id },
+            ));
         }
 
         let mut missing: HashSet<Pointee> = HashSet::new();
@@ -881,17 +1292,17 @@ impl Graph {
             }
         }
         if !missing.is_empty() {
-            return Err(AddHyperedgeMembers::PointeesNotFound(PointeesNotFound(
-                missing,
-            )));
+            return Err(AddHyperedgeMembersError::PointeesNotFound(
+                PointeesNotFoundError { pointees: missing },
+            ));
         }
 
         let existing = self.hyper_edge.get(&id).expect("checked above");
         let duplicates: Vec<Pointee> =
             m.iter().filter(|p| existing.contains(*p)).cloned().collect();
         if !duplicates.is_empty() {
-            return Err(AddHyperedgeMembers::MembersAlreadyExist(
-                MembersAlreadyExist(duplicates),
+            return Err(AddHyperedgeMembersError::MembersAlreadyExist(
+                MembersAlreadyExistError { members: duplicates },
             ));
         }
 
@@ -916,9 +1327,9 @@ impl Graph {
         &mut self,
         id: HyperEdgeId,
         m: HashSet<Pointee>,
-    ) -> Result<(), AddHyperedgeMembers> {
+    ) -> Result<(), AddHyperedgeMembersError> {
         self.silent_add_hyperedge_members(id, m.clone())?;
-        self.record_patch(Patch::AddElementsToHyperEdge { id, members: m });
+        self.emit_patch(Patch::AddElementsToHyperEdge { id, members: m });
         Ok(())
     }
 
@@ -926,115 +1337,322 @@ impl Graph {
         &mut self,
         id: HyperEdgeId,
         m: HashSet<Pointee>,
-    ) -> Result<(), RemoveHyperedgeMembers> {
-        todo!()
+    ) -> Result<(), RemoveHyperedgeMembersError> {
+        let Some(current) = self.hyper_edge.get(&id) else {
+            return Err(RemoveHyperedgeMembersError::HyperEdgeNotFound(
+                HyperEdgeNotFoundError { id },
+            ));
+        };
+
+        let not_present: Vec<Pointee> = m
+            .iter()
+            .filter(|p| !current.contains(*p))
+            .cloned()
+            .collect();
+        if !not_present.is_empty() {
+            return Err(RemoveHyperedgeMembersError::MembersNotInHyperedge(
+                MembersNotInHyperedgeError { members: not_present },
+            ));
+        }
+
+        let members_set = self.hyper_edge.get_mut(&id).expect("checked above");
+        for p in &m {
+            members_set.remove(p);
+        }
+        let now_empty = members_set.is_empty();
+
+        // Strip `id` from each removed member's reverse-index bucket.
+        for p in &m {
+            if let Some(bucket) = self.pointee_uses.get_mut(p) {
+                bucket.hyperedges.remove(&id);
+                if bucket.is_empty() {
+                    self.pointee_uses.remove(p);
+                    self.untrack_pointee_entity(p);
+                }
+            }
+        }
+
+        // Invariant: hyperedges are never empty. If membership went to
+        // zero, kill the hyperedge and cascade.
+        if now_empty {
+            self.hyper_edge.remove(&id);
+            self.entities.remove(&id);
+            self.cascade_remove_id(id);
+        }
+
+        Ok(())
     }
 
-    fn remove_hyperedge_members(
+    pub fn remove_hyperedge_members(
         &mut self,
         id: HyperEdgeId,
         m: HashSet<Pointee>,
-    ) -> Result<(), RemoveHyperedgeMembers> {
-        todo!()
+    ) -> Result<(), RemoveHyperedgeMembersError> {
+        self.silent_remove_hyperedge_members(id, m.clone())?;
+        self.emit_patch(Patch::RemoveElementsFromHyperEdge { id, members: m });
+        Ok(())
     }
 
+    fn silent_replace_node(
+        &mut self,
+        id: &NodeId,
+        obj: Object,
+    ) -> Result<Object, NodeNotFoundError> {
+        if !self.is_node(id) {
+            return Err(NodeNotFoundError { id: *id });
+        }
+        // is_node checked the key exists, so insert returns Some(old).
+        let old = self
+            .entities
+            .insert(*id, obj)
+            .expect("is_node checked above");
+        // Path-pointees through this node may no longer resolve
+        // under the new object — cascade the dead ones.
+        self.cascade_invalid_paths_through(*id);
+        Ok(old)
+    }
+
+    /// Replace the object on a node. Records either `ChangeNode` (with
+    /// a delta) or `UpsertNode` (full object), whichever is more
+    /// compact: delta wins when the number of patch ops is `<=` the
+    /// number of fields in the new object.
     pub fn replace_node(&mut self, id: &NodeId, obj: Object) -> Result<Field, NodeNotFoundError> {
-        todo!()
+        let new_field_count = obj.len();
+        let old = self.silent_replace_node(id, obj.clone())?;
+
+        let delta = diff_object(&old, &obj);
+        if delta.len() <= new_field_count {
+            self.emit_patch(Patch::ChangeNode { id: *id, delta });
+        } else {
+            self.emit_patch(Patch::UpsertNode { id: *id, obj });
+        }
+
+        Ok(Field::Object(old))
     }
 
+    /// Set the attached object on `id`, regardless of whether one was
+    /// already there. Used by `apply_patch` for `Upsert{Edge,HyperEdge}Data`
+    /// patches — replay must work for both initial attach and replace.
+    fn silent_upsert_attached_obj(
+        &mut self,
+        id: AttachTargetID,
+        obj: Object,
+    ) -> Result<(), AttachObjectError> {
+        let ty = match self.get_type(id) {
+            Some(t) => t,
+            None => {
+                return Err(AttachObjectError::AttachTargetNotFound(
+                    AttachTargetNotFoundError { id },
+                ))
+            }
+        };
+        // Allow Edge/HyperEdge/MetaEdge (initial attach) AND
+        // AttachedObject (already attached → upsert replaces).
+        if !matches!(
+            ty,
+            EntityType::Edge
+                | EntityType::HyperEdge
+                | EntityType::MetaEdge
+                | EntityType::AttachedObject
+        ) {
+            return Err(AttachObjectError::IncorrectType(IncorrectTypeError {
+                entity_id: id,
+                expected_type: vec![
+                    EntityType::Edge.to_string(),
+                    EntityType::HyperEdge.to_string(),
+                    EntityType::MetaEdge.to_string(),
+                ],
+                actual_type: ty.to_string(),
+            }));
+        }
+        self.entities.insert(id, obj);
+        // Replace case: paths through this id may no longer resolve.
+        // Initial-attach case: no paths existed yet (unattached id couldn't
+        // produce a valid Pointee::Path at add time), so this is a no-op.
+        self.cascade_invalid_paths_through(id);
+        Ok(())
+    }
+
+    fn silent_replace_attached_obj(
+        &mut self,
+        id: &AttachTargetID,
+        obj: Object,
+    ) -> Result<Object, NoAttachedObjectError> {
+        let is_attach_target = self.entities.contains_key(id)
+            && (self.edges.contains_key(id) || self.hyper_edge.contains_key(id));
+        if !is_attach_target {
+            return Err(NoAttachedObjectError { id: *id });
+        }
+        let old = self
+            .entities
+            .insert(*id, obj)
+            .expect("is_attach_target checked above");
+        self.cascade_invalid_paths_through(*id);
+        Ok(old)
+    }
+
+    /// Replace the attached object on an edge or hyperedge. Strict —
+    /// fails if the target has no attached object yet (use
+    /// `attach_obj` for that). Records `ChangeEdgeData`/`UpsertEdgeData`
+    /// or the HyperEdge variants based on which compresses better:
+    /// delta wins when its op count is `<=` the new object's field
+    /// count.
     pub fn replace_attached_obj(
         &mut self,
         id: &AttachTargetID,
         obj: Object,
-    ) -> Result<(), EdgeNotFoundError> {
-        todo!()
+    ) -> Result<Field, NoAttachedObjectError> {
+        let new_field_count = obj.len();
+        let is_hyper = self.hyper_edge.contains_key(id);
+
+        let old = self.silent_replace_attached_obj(id, obj.clone())?;
+        let delta = diff_object(&old, &obj);
+        let use_change = delta.len() <= new_field_count;
+
+        match (is_hyper, use_change) {
+            (true, true) => self.emit_patch(Patch::ChangeHyperEdgeData { id: *id, delta }),
+            (true, false) => self.emit_patch(Patch::UpsertHyperEdgeData { id: *id, obj }),
+            (false, true) => self.emit_patch(Patch::ChangeEdgeData { id: *id, delta }),
+            (false, false) => self.emit_patch(Patch::UpsertEdgeData { id: *id, obj }),
+        }
+
+        Ok(Field::Object(old))
     }
 
-    fn silent_retraget_edge(
+    fn silent_retarget_edge(
         &mut self,
         id: &Uuid,
-        new_target: RetrargetEdge,
+        new_target: RetargetEdge,
     ) -> Result<(), RetargetError> {
-        todo!()
+        let (old_source, old_target) = match self.edges.get(id) {
+            Some((s, t)) => (s.clone(), t.clone()),
+            None => return Err(RetargetError::EdgeNotFound(EdgeNotFoundError { id: *id })),
+        };
+
+        let new_pointee = match &new_target {
+            RetargetEdge::Source(p) | RetargetEdge::Target(p) => p,
+        };
+        if !self.is_pointee_exist(new_pointee) {
+            return Err(RetargetError::InvalidTarget(InvalidRetargetError {
+                edge_id: *id,
+                new_target,
+            }));
+        }
+
+        // Identify which endpoint is being swapped.
+        let is_source = matches!(new_target, RetargetEdge::Source(_));
+        let (old_endpoint, new_endpoint) = if is_source {
+            (old_source.clone(), new_pointee.clone())
+        } else {
+            (old_target.clone(), new_pointee.clone())
+        };
+
+        // No-op — same pointee.
+        if old_endpoint == new_endpoint {
+            return Ok(());
+        }
+
+        // Rewrite the edge.
+        let new_pair = if is_source {
+            (new_endpoint.clone(), old_target)
+        } else {
+            (old_source, new_endpoint.clone())
+        };
+        self.edges.insert(*id, new_pair);
+
+        // Strip eid from the old endpoint's bucket (might empty it).
+        if let Some(bucket) = self.pointee_uses.get_mut(&old_endpoint) {
+            if is_source {
+                bucket.edges_as_source.remove(id);
+            } else {
+                bucket.edges_as_target.remove(id);
+            }
+            if bucket.is_empty() {
+                self.pointee_uses.remove(&old_endpoint);
+                self.untrack_pointee_entity(&old_endpoint);
+            }
+        }
+
+        // Register eid on the new endpoint's bucket.
+        self.track_pointee_entity(&new_endpoint);
+        let bucket = self.pointee_uses.entry(new_endpoint).or_default();
+        if is_source {
+            bucket.edges_as_source.insert(*id);
+        } else {
+            bucket.edges_as_target.insert(*id);
+        }
+
+        Ok(())
     }
 
-    pub fn retraget_edge(
+    pub fn retarget_edge(
         &mut self,
         id: &Uuid,
-        new_target: RetrargetEdge,
+        new_target: RetargetEdge,
     ) -> Result<(), RetargetError> {
-        todo!()
+        self.silent_retarget_edge(id, new_target.clone())?;
+        self.emit_patch(Patch::RetargetEdge {
+            id: *id,
+            new_target,
+        });
+        Ok(())
     }
 
-    /// Apply patch to node or attached object
+    /// Apply a sequence of `ObjectPatch` to a node's or attached
+    /// object's `Object` at `id`. Cascades any `Pointee::Path`
+    /// references through `id` that no longer resolve under the new
+    /// shape. An empty `patch` is a successful no-op.
     fn obj_apply_patch(&mut self, id: Uuid, patch: Vec<ObjectPatch>) -> Result<(), DeltaError> {
-        todo!()
+        let obj = self
+            .entities
+            .get_mut(&id)
+            .ok_or(DeltaError::NotFound(EntityNotFoundError { id }))?;
+        apply_object_patches(obj, patch).map_err(DeltaError::Delta)?;
+        self.cascade_invalid_paths_through(id);
+        Ok(())
     }
 
-    /// Apply a single [`Patch`] to this graph.
-    ///
+    /// Apply a sequence of [`Patch`]es to this graph in order.
     pub(crate) fn apply_patch(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
         for patch in delta {
             match patch {
-                Patch::AddNode { id, obj } => {
-                    self.silent_add_node_with_id(id, obj)
-                        .map_err(ApplyPatchError::NodeAlreadyExists)?;
-                }
+                Patch::AddNode { id, obj } => self.silent_add_node_with_id(id, obj)?,
                 Patch::RemoveNode { id } => {
-                    self.silent_remove_node(&id)
-                        .map_err(ApplyPatchError::NodeNotFound)?;
+                    self.silent_remove_node(&id)?;
                 }
-                Patch::ChangeNode { id, delta } => {
-                    self.obj_apply_patch(id, delta)
-                        .map_err(ApplyPatchError::Change)?;
+                Patch::ChangeNode { id, delta } => self.obj_apply_patch(id, delta)?,
+                Patch::UpsertNode { id, obj } => {
+                    self.silent_replace_node(&id, obj)?;
                 }
-                Patch::UpsertNode { id, obj } => todo!(),
                 Patch::AddEdge { id, source, target } => {
-                    self.silent_add_edge_with_id(id, source, target)
-                        .map_err(ApplyPatchError::AddEdge)?;
+                    self.silent_add_edge_with_id(id, source, target)?
                 }
                 Patch::RemoveEdge { id } => {
-                    self.silent_remove_edge(&id)
-                        .map_err(ApplyPatchError::EdgeNotFound)?;
+                    self.silent_remove_edge(&id)?;
                 }
-                Patch::RetrargetEdge { id, new_target } => {
-                    self.silent_retraget_edge(&id, new_target)
-                        .map_err(ApplyPatchError::Retarget)?;
+                Patch::RetargetEdge { id, new_target } => {
+                    self.silent_retarget_edge(&id, new_target)?
                 }
-                Patch::UpsertEdgeData { id, obj } => todo!(),
-                Patch::ChangeEdgeData { id, delta } => {
-                    self.obj_apply_patch(id, delta)
-                        .map_err(ApplyPatchError::Change)?;
-                }
-                Patch::RemoveEdgeData { id } => {
-                    self.silent_remove_attached(id)
-                        .map_err(ApplyPatchError::RemoveAttached)?;
-                }
+                Patch::UpsertEdgeData { id, obj } => self.silent_upsert_attached_obj(id, obj)?,
+                Patch::ChangeEdgeData { id, delta } => self.obj_apply_patch(id, delta)?,
+                Patch::RemoveEdgeData { id } => self.silent_remove_attached(id)?,
                 Patch::CreateHyperEdge { id, members } => {
-                    self.silent_create_hyperedge_with_id(&id, members)
-                        .map_err(ApplyPatchError::CreateHyperEdgeError)?;
+                    self.silent_create_hyperedge_with_id(&id, members)?
                 }
                 Patch::RemoveHyperEdge { id } => {
-                    self.silent_remove_hyperedge(&id)
-                        .map_err(ApplyPatchError::HyperEdgeNotFound)?;
+                    self.silent_remove_hyperedge(&id)?;
                 }
                 Patch::AddElementsToHyperEdge { id, members } => {
-                    self.silent_add_hyperedge_members(id, members)
-                        .map_err(ApplyPatchError::AddHyperedgeMembers)?;
+                    self.silent_add_hyperedge_members(id, members)?
                 }
                 Patch::RemoveElementsFromHyperEdge { id, members } => {
-                    self.silent_remove_hyperedge_members(id, members)
-                        .map_err(ApplyPatchError::RemoveHyperedgeMembers)?;
+                    self.silent_remove_hyperedge_members(id, members)?
                 }
-                Patch::UpsertHyperEdgeData { id, obj } => todo!(),
-                Patch::ChangeHyperEdgeData { id, delta } => {
-                    self.obj_apply_patch(id, delta)
-                        .map_err(ApplyPatchError::Change)?;
+                Patch::UpsertHyperEdgeData { id, obj } => {
+                    self.silent_upsert_attached_obj(id, obj)?
                 }
-                Patch::RemoveHyperEdgeData { id } => {
-                    self.silent_remove_attached(id)
-                        .map_err(ApplyPatchError::RemoveAttached)?;
-                }
+                Patch::ChangeHyperEdgeData { id, delta } => self.obj_apply_patch(id, delta)?,
+                Patch::RemoveHyperEdgeData { id } => self.silent_remove_attached(id)?,
             }
         }
 
@@ -1045,15 +1663,15 @@ impl Graph {
 
     /* ------------ START LISTENERS ----------- */
 
-    fn record_patch(&mut self, patch: Patch) {
+    fn emit_patch(&mut self, patch: Patch) {
         self.events.push(patch);
     }
 
-    pub fn subscribe_on_change(&mut self, listener: Box<dyn Fn(Patch)>) -> ListernerID {
+    pub fn subscribe_on_change(&mut self, listener: Box<dyn FnMut(Patch)>) -> ListenerId {
         todo!()
     }
 
-    pub fn unsubscribe_on_change(&mut self, id: ListernerID) {
+    pub fn unsubscribe_on_change(&mut self, id: ListenerId) {
         todo!()
     }
 
@@ -1192,7 +1810,7 @@ mod tests {
         //    |                     |
         //    |----------------------
         // ````
-        pub fn create_semple_graph1() -> (
+        pub fn create_sample_graph1() -> (
             Graph,
             NodeId,
             NodeId,
@@ -1241,7 +1859,7 @@ mod tests {
         //  |                              |
         //  |-----------h------------------|
         // ```
-        pub fn create_semple_graph2() -> (
+        pub fn create_sample_graph2() -> (
             Graph,
             NodeId,
             NodeId,
@@ -1285,7 +1903,7 @@ mod tests {
         ///    \         /----- e3 -----   |
         ///     -- e2 - n3 -------- e4 ----
         /// ```
-        pub fn create_semple_graph3() -> (
+        pub fn create_sample_graph3() -> (
             Graph,
             NodeId,
             NodeId,
@@ -1317,11 +1935,10 @@ mod tests {
         mod test_iter_entities {
             use super::*;
 
-            /// Simple case we just check that all
-            /// kind of entities iterator yeld
+            /// Iterator yields nodes, edges, and hyperedges all together.
             #[test]
-            fn test_iter_entities1() {
-                let (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h) = test_utils::create_semple_graph1();
+            fn yields_all_entity_kinds() {
+                let (g, n1, n2, n3, n4, e1, e2, e3, e4, e5, h) = test_utils::create_sample_graph1();
 
                 let mut expected = HashSet::new();
                 expected.insert(n1);
@@ -1378,7 +1995,7 @@ mod tests {
             /// `e1` and `h` would each show up twice and this test
             /// catches it.
             #[test]
-            fn test_iter_entities2() {
+            fn deduplicates_attached_target_ids() {
                 let mut g = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let n1 = g.add_node(obj.clone());
@@ -1426,9 +2043,9 @@ mod tests {
             use super::*;
 
             #[test]
-            fn iter_edges1() {
+            fn yields_all_edges_in_sample_graph() {
                 let (g, _n1, _n2, _n3, _n4, e1, e2, e3, e4, e5, _h) =
-                    test_utils::create_semple_graph1();
+                    test_utils::create_sample_graph1();
 
                 let actual: Vec<_> = g.iter_edges().collect();
 
@@ -1461,7 +2078,7 @@ mod tests {
             #[test]
             fn iter_nodes() {
                 let (g, n1, n2, n3, n4, _e1, _e2, _e3, _e4, _e5, _h) =
-                    test_utils::create_semple_graph1();
+                    test_utils::create_sample_graph1();
 
                 let actual: Vec<_> = g.iter_nodes().collect();
 
@@ -1494,7 +2111,7 @@ mod tests {
             #[test]
             fn test_iter_hyperedge() {
                 let (g, _n1, _n2, _n3, _n4, _e1, _e2, _e3, _e4, _e5, h) =
-                    test_utils::create_semple_graph1();
+                    test_utils::create_sample_graph1();
 
                 let actual: Vec<_> = g.iter_hyperedge().collect();
 
@@ -1541,7 +2158,7 @@ mod tests {
             #[test]
             fn yields_attach_targets() {
                 let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
                 let obj = test_utils::create_simple_obj("attached");
 
                 g.attach_obj(e_a, obj.clone()).unwrap();
@@ -1583,7 +2200,7 @@ mod tests {
             #[test]
             fn test_obj() {
                 let (mut graph, n1, _n2, _n3, _n4, e_a, _e_b, meta_edge, edge_to_h, _h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
 
                 let obj = test_utils::create_simple_obj("attached");
 
@@ -1611,7 +2228,7 @@ mod tests {
             #[test]
             fn obj_bare_edge_is_none() {
                 let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
                 assert!(g.obj(&e_a).is_none());
             }
 
@@ -1619,7 +2236,7 @@ mod tests {
             #[test]
             fn obj_bare_hyperedge_is_none() {
                 let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
                 assert!(g.obj(&h).is_none());
             }
         }
@@ -1631,7 +2248,7 @@ mod tests {
             #[test]
             fn edge1() {
                 let (graph, n1, n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
 
                 let u = graph.edge(&e_a).unwrap();
                 assert_eq!(
@@ -1649,7 +2266,7 @@ mod tests {
             #[test]
             fn edge2() {
                 let (graph, n1, _n2, _n3, _n4, _e_a, e_b, meta_edge, _edge_to_h, _h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
 
                 let u = graph.edge(&meta_edge).unwrap();
                 assert_eq!(
@@ -1667,7 +2284,7 @@ mod tests {
             #[test]
             fn edge3() {
                 let (graph, n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, edge_to_h, h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
 
                 let u = graph.edge(&edge_to_h).unwrap();
                 assert_eq!(
@@ -1731,7 +2348,7 @@ mod tests {
                 let err = g.edge(&id).unwrap_err();
                 assert!(matches!(
                     err,
-                    GetEdgeError::NotFound(EntityNotFoundError(x)) if x == id
+                    GetEdgeError::NotFound(EntityNotFoundError { id: x }) if x == id
                 ));
             }
 
@@ -1746,7 +2363,7 @@ mod tests {
                 let err = g.edge(&n1).unwrap_err();
                 match err {
                     GetEdgeError::IncorrectType(e) => {
-                        assert_eq!(e.node_id, n1);
+                        assert_eq!(e.entity_id, n1);
                         assert_eq!(e.actual_type, "Node");
                     }
                     other => panic!("expected IncorrectType, got {other:?}"),
@@ -1757,12 +2374,12 @@ mod tests {
             #[test]
             fn edge_incorrect_type_hyperedge() {
                 let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
 
                 let err = g.edge(&h).unwrap_err();
                 match err {
                     GetEdgeError::IncorrectType(e) => {
-                        assert_eq!(e.node_id, h);
+                        assert_eq!(e.entity_id, h);
                         assert_eq!(e.actual_type, "HyperEdge");
                     }
                     other => panic!("expected IncorrectType, got {other:?}"),
@@ -1777,14 +2394,14 @@ mod tests {
             #[test]
             fn edge_incorrect_type_attached() {
                 let (mut g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
                 let obj = test_utils::create_simple_obj("attached");
                 g.attach_obj(h, obj).unwrap();
 
                 let err = g.edge(&h).unwrap_err();
                 match err {
                     GetEdgeError::IncorrectType(e) => {
-                        assert_eq!(e.node_id, h);
+                        assert_eq!(e.entity_id, h);
                         assert_eq!(e.actual_type, "AttachedObject");
                     }
                     other => panic!("expected IncorrectType, got {other:?}"),
@@ -1798,7 +2415,7 @@ mod tests {
             #[test]
             fn hyperedge1() {
                 let (graph, _n1, _n2, n3, n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
 
                 let members = graph.hyperedge_members(&h).unwrap();
                 let expected: HashSet<Pointee> = [n3.into(), n4.into()].into_iter().collect();
@@ -1816,7 +2433,7 @@ mod tests {
             #[test]
             fn hyperedge_for_edge_id() {
                 let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
                 assert!(g.hyperedge_members(&e_a).is_none());
             }
 
@@ -1854,7 +2471,7 @@ mod tests {
                 #[test]
                 fn edge() {
                     let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert!(matches!(g.get_type(e_a), Some(EntityType::Edge)));
                 }
 
@@ -1862,7 +2479,7 @@ mod tests {
                 #[test]
                 fn meta_edge_with_edge_endpoint() {
                     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert!(matches!(g.get_type(meta_edge), Some(EntityType::MetaEdge)));
                 }
 
@@ -1870,7 +2487,7 @@ mod tests {
                 #[test]
                 fn meta_edge_with_hyperedge_endpoint() {
                     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert!(matches!(g.get_type(edge_to_h), Some(EntityType::MetaEdge)));
                 }
 
@@ -1878,7 +2495,7 @@ mod tests {
                 #[test]
                 fn hyperedge() {
                     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert!(matches!(g.get_type(h), Some(EntityType::HyperEdge)));
                 }
 
@@ -1887,7 +2504,7 @@ mod tests {
                 #[test]
                 fn attached_on_edge() {
                     let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     let obj = test_utils::create_simple_obj("attached");
                     g.attach_obj(e_a, obj).unwrap();
                     assert!(matches!(g.get_type(e_a), Some(EntityType::AttachedObject)));
@@ -1899,7 +2516,7 @@ mod tests {
                 #[test]
                 fn attached_on_hyperedge() {
                     let (mut g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     let obj = test_utils::create_simple_obj("attached");
                     g.attach_obj(h, obj).unwrap();
                     assert!(matches!(g.get_type(h), Some(EntityType::AttachedObject)));
@@ -1934,21 +2551,21 @@ mod tests {
                 #[test]
                 fn entity_edge() {
                     let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert_eq!(g.classify_pointee(&e_a.into()), Some(PointeeKind::Edge));
                 }
 
                 #[test]
                 fn entity_hyperedge() {
                     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert_eq!(g.classify_pointee(&h.into()), Some(PointeeKind::HyperEdge));
                 }
 
                 #[test]
                 fn entity_meta_edge() {
                     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert_eq!(
                         g.classify_pointee(&meta_edge.into()),
                         Some(PointeeKind::MetaEdge)
@@ -1958,7 +2575,7 @@ mod tests {
                 #[test]
                 fn entity_attached() {
                     let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     let obj = test_utils::create_simple_obj("attached");
                     g.attach_obj(e_a, obj).unwrap();
                     assert_eq!(
@@ -2006,18 +2623,16 @@ mod tests {
 
             mod test_is_exist {
                 use super::*;
-                /// Test exist node
                 #[test]
-                fn test_is_exist1() {
+                fn node_exists() {
                     let mut g = Graph::default();
                     let obj = test_utils::create_simple_obj("test_field");
                     let n1 = g.add_node(obj.clone());
                     assert!(g.is_exist(&n1))
                 }
 
-                /// Test exist edge
                 #[test]
-                fn test_is_exist2() {
+                fn edge_exists() {
                     let mut g = Graph::default();
                     let obj = test_utils::create_simple_obj("test_field");
                     let n1 = g.add_node(obj.clone());
@@ -2026,9 +2641,8 @@ mod tests {
                     assert!(g.is_exist(&e1))
                 }
 
-                /// Test exist hyperedge
                 #[test]
-                fn test_is_exist3() {
+                fn hyperedge_exists() {
                     let mut g = Graph::default();
                     let obj = test_utils::create_simple_obj("test_field");
                     let n1 = g.add_node(obj.clone());
@@ -2040,9 +2654,9 @@ mod tests {
                     assert!(g.is_exist(&h))
                 }
 
-                /// Test exist metaedge (an edge whose endpoint is another edge)
+                /// Meta-edge: an edge whose endpoint is another edge.
                 #[test]
-                fn test_is_exist4() {
+                fn meta_edge_exists() {
                     let mut g = Graph::default();
                     let obj = test_utils::create_simple_obj("test_field");
                     let n1 = g.add_node(obj.clone());
@@ -2067,28 +2681,28 @@ mod tests {
                 #[test]
                 fn entity_edge() {
                     let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert!(g.is_pointee_exist(&e_a.into()));
                 }
 
                 #[test]
                 fn entity_hyperedge() {
                     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert!(g.is_pointee_exist(&h.into()));
                 }
 
                 #[test]
                 fn entity_meta_edge() {
                     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     assert!(g.is_pointee_exist(&meta_edge.into()));
                 }
 
                 #[test]
                 fn entity_attached() {
                     let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     let obj = test_utils::create_simple_obj("attached");
                     g.attach_obj(e_a, obj).unwrap();
                     assert!(g.is_pointee_exist(&e_a.into()));
@@ -2168,7 +2782,7 @@ mod tests {
                 #[test]
                 fn path_on_bare_edge_fails() {
                     let (g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, _h) =
-                        test_utils::create_semple_graph2();
+                        test_utils::create_sample_graph2();
                     let p = Pointee::Path(GlobalObjPath::new(e_a, "x").unwrap());
                     assert!(!g.is_pointee_exist(&p));
                 }
@@ -2185,7 +2799,7 @@ mod tests {
             /// Create a hyperedge with two members and verify
             /// both id presence and members round-trip.
             #[test]
-            fn create_hyperedge1() {
+            fn members_round_trip() {
                 let mut g = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let n1 = g.add_node(obj.clone());
@@ -2215,7 +2829,7 @@ mod tests {
             #[test]
             fn create_hyperedge_with_edge_and_hyperedge_members() {
                 let (mut g, _n1, _n2, _n3, _n4, e_a, _e_b, _meta_edge, _edge_to_h, h) =
-                    test_utils::create_semple_graph2();
+                    test_utils::create_sample_graph2();
 
                 let mut members = HashSet::new();
                 members.insert(e_a.into());
@@ -2238,7 +2852,9 @@ mod tests {
                     .unwrap_err();
                 assert_eq!(
                     err,
-                    CreateHyperEdgeError::HyperEdgeAlreadyExists(HyperEdgeAlreadyExistsError(h))
+                    CreateHyperEdgeError::HyperEdgeAlreadyExists(HyperEdgeAlreadyExistsError {
+                        id: h
+                    })
                 );
             }
 
@@ -2268,18 +2884,19 @@ mod tests {
         mod test_add_node {
             use super::*;
 
-            /// Simple case we add node and check that's is exist
+            /// Adding a node returns an id and the object can be looked up.
             #[test]
-            fn test_add_node1() {
+            fn add_then_lookup() {
                 let mut graph = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let node_id = graph.add_node(obj.clone());
                 assert_eq!(graph.obj(&node_id), Some(&obj));
             }
 
-            /// Check error node elready exist
+            /// Re-inserting under the same id is rejected and the
+            /// original object stays untouched.
             #[test]
-            fn test_add_node2() {
+            fn rejects_duplicate_id() {
                 let mut graph = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let n1 = graph.add_node(obj.clone());
@@ -2287,7 +2904,9 @@ mod tests {
                 let result2 = graph.silent_add_node_with_id(n1, obj2.clone());
                 assert_eq!(
                     result2.clone().unwrap_err(),
-                    NodeAlreadyExistsError(result2.unwrap_err().0)
+                    NodeAlreadyExistsError {
+                        id: result2.unwrap_err().id
+                    }
                 );
                 // Check thats change doesnt apply
                 assert_eq!(graph.obj(&n1), Some(&obj))
@@ -2297,9 +2916,9 @@ mod tests {
         mod test_add_edge {
             use super::*;
 
-            /// Create simple edge
+            /// Adding a basic edge stores its (source, target) pair.
             #[test]
-            fn test_add_edge1() {
+            fn add_basic_edge() {
                 let mut g = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let n1 = g.add_node(obj.clone());
@@ -2318,7 +2937,7 @@ mod tests {
 
             /// Self-loop: an edge with both endpoints equal is allowed.
             #[test]
-            fn test_add_edge2() {
+            fn allows_self_loop() {
                 let mut g = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let n1 = g.add_node(obj.clone());
@@ -2334,9 +2953,9 @@ mod tests {
                 )
             }
 
-            /// Unexisten targets
+            /// Both endpoints unresolved → MissingEndpoints with both ids.
             #[test]
-            fn test_add_edge3() {
+            fn rejects_both_endpoints_missing() {
                 let mut g = Graph::default();
                 let n1 = Uuid::new_v4();
                 let n2 = Uuid::new_v4();
@@ -2344,15 +2963,15 @@ mod tests {
                 let err = g.add_edge(n1, n2).unwrap_err();
                 assert_eq!(
                     err,
-                    AddEdgeError::MissingEndpointsError(MissingEndpointsError {
+                    AddEdgeError::MissingEndpoints(MissingEndpointsError {
                         missing_endpoints: vec![Pointee::EntityId(n1), Pointee::EntityId(n2)],
                     })
                 )
             }
 
-            /// Edge already exist
+            /// Re-inserting an edge under the same id is rejected.
             #[test]
-            fn test_add_edge4() {
+            fn rejects_duplicate_edge_id() {
                 let mut g = Graph::default();
                 let obj = test_utils::create_simple_obj("test_field");
                 let n1 = g.add_node(obj.clone());
@@ -2362,7 +2981,10 @@ mod tests {
                 let err = g
                     .silent_add_edge_with_id(e1, n1.into(), n2.into())
                     .unwrap_err();
-                assert_eq!(err, AddEdgeError::EdgeAlreadyExists(e1))
+                assert_eq!(
+                    err,
+                    AddEdgeError::EdgeAlreadyExists(EdgeAlreadyExistsError { id: e1 })
+                )
             }
         }
     }
@@ -2378,7 +3000,7 @@ mod tests {
             fn unknown_id() {
                 let mut g = Graph::default();
                 let err = g.remove_node(&Uuid::new_v4()).unwrap_err();
-                assert!(matches!(err, NodeNotFoundError(_)));
+                assert!(matches!(err, NodeNotFoundError { .. }));
             }
 
             /// Removing a node returns its attached object as Field::Object.
@@ -2544,7 +3166,7 @@ mod tests {
                 g.attach_obj(e, obj).unwrap();
 
                 let err = g.remove_node(&e).unwrap_err();
-                assert!(matches!(err, NodeNotFoundError(_)));
+                assert!(matches!(err, NodeNotFoundError { .. }));
                 // Edge itself untouched.
                 assert!(g.edges.contains_key(&e));
                 test_utils::check_index_invariant(&g);
@@ -2580,7 +3202,7 @@ mod tests {
             fn unknown_id() {
                 let mut g = Graph::default();
                 let err = g.remove_hyperedge(&Uuid::new_v4()).unwrap_err();
-                assert!(matches!(err, HyperEdgeNotFound(_)));
+                assert!(matches!(err, HyperEdgeNotFoundError { .. }));
             }
 
             /// Plain remove: hyperedge gone, members survive without
@@ -2729,7 +3351,7 @@ mod tests {
             fn unknown_id() {
                 let mut g = Graph::default();
                 let err = g.remove_attached(Uuid::new_v4()).unwrap_err();
-                assert!(matches!(err, RemoveAttached::NodeOrAttachedNotFound));
+                assert!(matches!(err, NoAttachedObjectError { .. }));
             }
 
             /// A bare node has no attached object — removal must fail
@@ -2740,7 +3362,7 @@ mod tests {
                 let n1 = g.add_node(test_utils::create_simple_obj("f"));
 
                 let err = g.remove_attached(n1).unwrap_err();
-                assert!(matches!(err, RemoveAttached::NodeOrAttachedNotFound));
+                assert!(matches!(err, NoAttachedObjectError { .. }));
                 assert!(g.is_exist(&n1));
                 assert!(g.entities.contains_key(&n1));
             }
@@ -2755,7 +3377,7 @@ mod tests {
                 let e = g.add_edge(n1, n2).unwrap();
 
                 let err = g.remove_attached(e).unwrap_err();
-                assert!(matches!(err, RemoveAttached::NodeOrAttachedNotFound));
+                assert!(matches!(err, NoAttachedObjectError { .. }));
                 assert!(g.edges.contains_key(&e));
             }
 
@@ -2883,6 +3505,128 @@ mod tests {
     mod test_modifiers {
         use super::*;
 
+        mod test_attach_obj {
+            use super::*;
+
+            /// Attaching to an unknown id is rejected — no patch recorded.
+            #[test]
+            fn unknown_target() {
+                let mut g = Graph::default();
+                let err = g
+                    .attach_obj(Uuid::new_v4(), test_utils::create_simple_obj("f"))
+                    .unwrap_err();
+                assert!(matches!(err, AttachObjectError::AttachTargetNotFound(_)));
+                assert!(g.events.is_empty());
+            }
+
+            /// A node is not an attach target.
+            #[test]
+            fn rejects_node() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(test_utils::create_simple_obj("f"));
+                let err = g
+                    .attach_obj(n1, test_utils::create_simple_obj("g"))
+                    .unwrap_err();
+                assert!(matches!(err, AttachObjectError::IncorrectType(_)));
+                let extra_events = g
+                    .events
+                    .iter()
+                    .filter(|p| {
+                        matches!(p, Patch::UpsertEdgeData { .. } | Patch::UpsertHyperEdgeData { .. })
+                    })
+                    .count();
+                assert_eq!(extra_events, 0);
+            }
+
+            /// Re-attaching is rejected (target is already AttachedObject).
+            #[test]
+            fn rejects_double_attach() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let e = g.add_edge(n1, n2).unwrap();
+                g.attach_obj(e, obj.clone()).unwrap();
+
+                let err = g.attach_obj(e, obj).unwrap_err();
+                assert!(matches!(err, AttachObjectError::IncorrectType(_)));
+                let count = g
+                    .events
+                    .iter()
+                    .filter(|p| matches!(p, Patch::UpsertEdgeData { .. }))
+                    .count();
+                assert_eq!(count, 1, "second attach must NOT have recorded a patch");
+            }
+
+            /// Attach onto a plain edge → records UpsertEdgeData.
+            #[test]
+            fn records_upsert_edge_data() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let e = g.add_edge(n1, n2).unwrap();
+                let attached = test_utils::create_simple_obj("data");
+
+                g.attach_obj(e, attached.clone()).unwrap();
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::UpsertEdgeData {
+                        id: e,
+                        obj: attached,
+                    }
+                );
+            }
+
+            /// Attach onto a hyperedge → records UpsertHyperEdgeData.
+            #[test]
+            fn records_upsert_hyperedge_data() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let mut m = HashSet::new();
+                m.insert(n1.into());
+                let h = g.create_hyperedge(m).unwrap();
+                let attached = test_utils::create_simple_obj("data");
+
+                g.attach_obj(h, attached.clone()).unwrap();
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::UpsertHyperEdgeData {
+                        id: h,
+                        obj: attached,
+                    }
+                );
+            }
+
+            /// Attach onto a meta-edge (edge whose endpoint is another
+            /// edge) — still recorded as UpsertEdgeData since meta-edges
+            /// live in `self.edges`.
+            #[test]
+            fn meta_edge_records_upsert_edge_data() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let e1 = g.add_edge(n1, n2).unwrap();
+                let n3 = g.add_node(obj.clone());
+                let meta = g.add_edge(n3, e1).unwrap();
+                let attached = test_utils::create_simple_obj("data");
+
+                g.attach_obj(meta, attached.clone()).unwrap();
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::UpsertEdgeData {
+                        id: meta,
+                        obj: attached,
+                    }
+                );
+            }
+        }
+
         mod test_add_hyperedge_members {
             use super::*;
 
@@ -2894,7 +3638,7 @@ mod tests {
                 let mut m = HashSet::new();
                 m.insert(n1.into());
                 let err = g.add_hyperedge_members(Uuid::new_v4(), m).unwrap_err();
-                assert!(matches!(err, AddHyperedgeMembers::NotFound(_)));
+                assert!(matches!(err, AddHyperedgeMembersError::HyperEdgeNotFound(_)));
             }
 
             /// Members that don't exist as pointees are rejected.
@@ -2909,7 +3653,7 @@ mod tests {
                 let mut m = HashSet::new();
                 m.insert(Pointee::EntityId(Uuid::new_v4()));
                 let err = g.add_hyperedge_members(h, m).unwrap_err();
-                assert!(matches!(err, AddHyperedgeMembers::PointeesNotFound(_)));
+                assert!(matches!(err, AddHyperedgeMembersError::PointeesNotFound(_)));
             }
 
             /// Adding a member that's already there is rejected,
@@ -2929,7 +3673,7 @@ mod tests {
                 m.insert(n1.into()); // duplicate
                 m.insert(n2.into()); // would-be new
                 let err = g.add_hyperedge_members(h, m).unwrap_err();
-                assert!(matches!(err, AddHyperedgeMembers::MembersAlreadyExist(_)));
+                assert!(matches!(err, AddHyperedgeMembersError::MembersAlreadyExist(_)));
 
                 // Atomicity: n2 was NOT added.
                 assert_eq!(g.hyperedge_members(&h), Some(&original));
@@ -3010,6 +3754,1177 @@ mod tests {
                 assert_eq!(g.hyperedge_members(&h), Some(&original));
                 test_utils::check_index_invariant(&g);
             }
+        }
+
+        mod test_remove_hyperedge_members {
+            use super::*;
+
+            /// Unknown hyperedge id is rejected.
+            #[test]
+            fn unknown_hyperedge() {
+                let mut g = Graph::default();
+                let mut m = HashSet::new();
+                m.insert(Pointee::EntityId(Uuid::new_v4()));
+                let err = g.remove_hyperedge_members(Uuid::new_v4(), m).unwrap_err();
+                assert!(matches!(err, RemoveHyperedgeMembersError::HyperEdgeNotFound(_)));
+            }
+
+            /// Removing a pointee that's not a current member is rejected,
+            /// and nothing is partially applied.
+            #[test]
+            fn member_not_in_hyperedge_atomic() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let n3 = g.add_node(obj);
+
+                let mut original = HashSet::new();
+                original.insert(n1.into());
+                original.insert(n2.into());
+                let h = g.create_hyperedge(original.clone()).unwrap();
+
+                let mut m = HashSet::new();
+                m.insert(n1.into()); // valid
+                m.insert(n3.into()); // not a member
+                let err = g.remove_hyperedge_members(h, m).unwrap_err();
+                assert!(matches!(
+                    err,
+                    RemoveHyperedgeMembersError::MembersNotInHyperedge(_)
+                ));
+
+                // Atomicity: n1 was NOT removed.
+                assert_eq!(g.hyperedge_members(&h), Some(&original));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Successful partial removal: hyperedge survives with the rest.
+            #[test]
+            fn removes_subset_and_records_patch() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+
+                let mut original = HashSet::new();
+                original.insert(n1.into());
+                original.insert(n2.into());
+                let h = g.create_hyperedge(original).unwrap();
+
+                let mut to_remove = HashSet::new();
+                to_remove.insert(n1.into());
+                g.remove_hyperedge_members(h, to_remove.clone()).unwrap();
+
+                let mut expected = HashSet::new();
+                expected.insert(n2.into());
+                assert_eq!(g.hyperedge_members(&h), Some(&expected));
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::RemoveElementsFromHyperEdge {
+                        id: h,
+                        members: to_remove,
+                    }
+                );
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Reverse index is cleaned: removed member's bucket no longer
+            /// references this hyperedge.
+            #[test]
+            fn removed_member_loses_hyperedge_link() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+
+                let mut original = HashSet::new();
+                original.insert(n1.into());
+                original.insert(n2.into());
+                let h = g.create_hyperedge(original).unwrap();
+
+                let mut to_remove = HashSet::new();
+                to_remove.insert(n1.into());
+                g.remove_hyperedge_members(h, to_remove).unwrap();
+
+                // n1 had only this hyperedge link → bucket fully gone.
+                assert!(!g.pointee_uses.contains_key(&Pointee::EntityId(n1)));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Removing all members empties the hyperedge — it dies and
+            /// any references to it cascade.
+            #[test]
+            fn empties_and_kills_hyperedge() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+
+                let mut original = HashSet::new();
+                original.insert(n1.into());
+                let h = g.create_hyperedge(original.clone()).unwrap();
+                let e = g.add_edge(n2, h).unwrap();
+
+                g.remove_hyperedge_members(h, original).unwrap();
+
+                assert!(!g.hyper_edge.contains_key(&h));
+                assert!(!g.edges.contains_key(&e));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Empty input is a no-op success.
+            #[test]
+            fn empty_input_is_noop() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(test_utils::create_simple_obj("f"));
+                let mut original = HashSet::new();
+                original.insert(n1.into());
+                let h = g.create_hyperedge(original.clone()).unwrap();
+
+                g.remove_hyperedge_members(h, HashSet::new()).unwrap();
+
+                assert_eq!(g.hyperedge_members(&h), Some(&original));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Path-pointee removal also untracks from entity_to_path_pointees
+            /// (when its bucket fully empties).
+            #[test]
+            fn removes_path_member_and_untracks() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+
+                let path = Pointee::Path(GlobalObjPath::new(n2, "test_field").unwrap());
+                let mut original = HashSet::new();
+                original.insert(n1.into());
+                original.insert(path.clone());
+                let h = g.create_hyperedge(original).unwrap();
+
+                let mut to_remove = HashSet::new();
+                to_remove.insert(path.clone());
+                g.remove_hyperedge_members(h, to_remove).unwrap();
+
+                assert!(!g.pointee_uses.contains_key(&path));
+                assert!(!g.entity_to_path_pointees.contains_key(&n2));
+                test_utils::check_index_invariant(&g);
+            }
+        }
+
+        mod test_replace_node {
+            use super::*;
+
+            fn obj_with(fields: &[(&str, Field)]) -> Object {
+                let mut o = Object::new();
+                for (k, v) in fields {
+                    o.insert((*k).into(), v.clone());
+                }
+                o
+            }
+
+            /// Unknown id is rejected.
+            #[test]
+            fn unknown_id() {
+                let mut g = Graph::default();
+                let err = g
+                    .replace_node(&Uuid::new_v4(), test_utils::create_simple_obj("f"))
+                    .unwrap_err();
+                assert!(matches!(err, NodeNotFoundError { .. }));
+            }
+
+            /// Edges (with attached object) are not nodes — rejected.
+            #[test]
+            fn rejects_attached_target() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let e = g.add_edge(n1, n2).unwrap();
+                g.attach_obj(e, obj.clone()).unwrap();
+
+                let err = g.replace_node(&e, obj).unwrap_err();
+                assert!(matches!(err, NodeNotFoundError { .. }));
+            }
+
+            /// Returns the previous object (wrapped in `Field::Object`).
+            #[test]
+            fn returns_old_object() {
+                let mut g = Graph::default();
+                let old = obj_with(&[("a", Field::Number(1))]);
+                let n1 = g.add_node(old.clone());
+                let new = obj_with(&[("a", Field::Number(2))]);
+
+                let returned = g.replace_node(&n1, new).unwrap();
+                assert_eq!(returned, Field::Object(old));
+            }
+
+            /// Few changed fields (delta_size <= new_size) → ChangeNode.
+            #[test]
+            fn small_delta_emits_change_node() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[
+                    ("a", Field::Number(1)),
+                    ("b", Field::Number(2)),
+                    ("c", Field::Number(3)),
+                ]));
+
+                let new = obj_with(&[
+                    ("a", Field::Number(1)),
+                    ("b", Field::Number(2)),
+                    ("c", Field::Number(99)), // only c changed
+                ]);
+                g.replace_node(&n1, new).unwrap();
+
+                match g.events.last().unwrap() {
+                    Patch::ChangeNode { id, delta } => {
+                        assert_eq!(*id, n1);
+                        assert_eq!(delta.len(), 1);
+                        assert!(matches!(
+                            &delta[0],
+                            ObjectPatch::UpsertField { name, .. } if name == "c"
+                        ));
+                    }
+                    other => panic!("expected ChangeNode, got {:?}", other),
+                }
+            }
+
+            /// Many changes (delta_size > new_size) → UpsertNode.
+            /// Old: {a,b,c}, New: {x,y,z} → delta would be 6 ops, new has 3 fields.
+            #[test]
+            fn large_delta_emits_upsert_node() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[
+                    ("a", Field::Number(1)),
+                    ("b", Field::Number(2)),
+                    ("c", Field::Number(3)),
+                ]));
+
+                let new = obj_with(&[
+                    ("x", Field::Number(10)),
+                    ("y", Field::Number(20)),
+                    ("z", Field::Number(30)),
+                ]);
+                g.replace_node(&n1, new.clone()).unwrap();
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::UpsertNode { id: n1, obj: new }
+                );
+            }
+
+            /// Boundary `delta_size == new_size` — still ChangeNode (`<=`).
+            #[test]
+            fn equal_size_emits_change_node() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[
+                    ("a", Field::Number(1)),
+                    ("b", Field::Number(2)),
+                ]));
+
+                // Both fields changed → 2 UpsertField ops, new has 2 fields.
+                let new = obj_with(&[
+                    ("a", Field::Number(10)),
+                    ("b", Field::Number(20)),
+                ]);
+                g.replace_node(&n1, new).unwrap();
+
+                assert!(matches!(
+                    g.events.last().unwrap(),
+                    Patch::ChangeNode { .. }
+                ));
+            }
+
+            /// Identical replacement: delta is empty → ChangeNode with empty delta.
+            #[test]
+            fn identical_obj_emits_empty_change_node() {
+                let mut g = Graph::default();
+                let obj = obj_with(&[("a", Field::Number(1))]);
+                let n1 = g.add_node(obj.clone());
+
+                g.replace_node(&n1, obj).unwrap();
+
+                match g.events.last().unwrap() {
+                    Patch::ChangeNode { id, delta } => {
+                        assert_eq!(*id, n1);
+                        assert!(delta.is_empty());
+                    }
+                    other => panic!("expected ChangeNode, got {:?}", other),
+                }
+            }
+
+            /// Path-pointee that still resolves under the new object survives.
+            #[test]
+            fn path_pointee_survives_when_field_kept() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("data", Field::Number(1))]));
+                let n2 = g.add_node(obj_with(&[("x", Field::Null)]));
+                let path = Pointee::Path(GlobalObjPath::new(n1, "data").unwrap());
+                let e = g.add_edge(n2, path.clone()).unwrap();
+
+                // Replace but keep `data` field.
+                g.replace_node(&n1, obj_with(&[("data", Field::Number(99))]))
+                    .unwrap();
+
+                assert!(g.edges.contains_key(&e));
+                assert!(g.pointee_uses.contains_key(&path));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Path-pointee that no longer resolves cascades away.
+            #[test]
+            fn path_pointee_cascades_when_field_dropped() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("data", Field::Number(1))]));
+                let n2 = g.add_node(obj_with(&[("x", Field::Null)]));
+                let path = Pointee::Path(GlobalObjPath::new(n1, "data").unwrap());
+                let e = g.add_edge(n2, path.clone()).unwrap();
+
+                // Replace with an object that lacks `data`.
+                g.replace_node(&n1, obj_with(&[("other", Field::Null)]))
+                    .unwrap();
+
+                assert!(!g.edges.contains_key(&e));
+                assert!(!g.pointee_uses.contains_key(&path));
+                assert!(!g.entity_to_path_pointees.contains_key(&n1));
+                // Node itself still alive.
+                assert!(g.is_exist(&n1));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// EntityId references survive — only path references can die.
+            #[test]
+            fn entity_id_references_survive() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("a", Field::Null)]));
+                let n2 = g.add_node(obj_with(&[("b", Field::Null)]));
+                let e = g.add_edge(n2, n1).unwrap();
+
+                g.replace_node(&n1, obj_with(&[("c", Field::Null)]))
+                    .unwrap();
+
+                assert!(g.edges.contains_key(&e));
+                test_utils::check_index_invariant(&g);
+            }
+        }
+
+        mod test_replace_attached_obj {
+            use super::*;
+
+            fn obj_with(fields: &[(&str, Field)]) -> Object {
+                let mut o = Object::new();
+                for (k, v) in fields {
+                    o.insert((*k).into(), v.clone());
+                }
+                o
+            }
+
+            /// Unknown id is rejected.
+            #[test]
+            fn unknown_id() {
+                let mut g = Graph::default();
+                let err = g
+                    .replace_attached_obj(&Uuid::new_v4(), obj_with(&[]))
+                    .unwrap_err();
+                assert!(matches!(err, NoAttachedObjectError { .. }));
+            }
+
+            /// A node is not an attach target.
+            #[test]
+            fn rejects_node() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("a", Field::Null)]));
+                let err = g.replace_attached_obj(&n1, obj_with(&[])).unwrap_err();
+                assert!(matches!(err, NoAttachedObjectError { .. }));
+            }
+
+            /// A bare edge (no attach_obj called) — rejected.
+            #[test]
+            fn rejects_bare_edge() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("a", Field::Null)]));
+                let n2 = g.add_node(obj_with(&[("a", Field::Null)]));
+                let e = g.add_edge(n1, n2).unwrap();
+
+                let err = g.replace_attached_obj(&e, obj_with(&[])).unwrap_err();
+                assert!(matches!(err, NoAttachedObjectError { .. }));
+            }
+
+            /// A bare hyperedge — rejected.
+            #[test]
+            fn rejects_bare_hyperedge() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("a", Field::Null)]));
+                let mut m = HashSet::new();
+                m.insert(n1.into());
+                let h = g.create_hyperedge(m).unwrap();
+
+                let err = g.replace_attached_obj(&h, obj_with(&[])).unwrap_err();
+                assert!(matches!(err, NoAttachedObjectError { .. }));
+            }
+
+            /// Returns the previous attached object.
+            #[test]
+            fn returns_old_object() {
+                let mut g = Graph::default();
+                let obj = obj_with(&[("a", Field::Null)]);
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+                let e = g.add_edge(n1, n2).unwrap();
+                let old = obj_with(&[("data", Field::Number(1))]);
+                g.attach_obj(e, old.clone()).unwrap();
+
+                let returned = g
+                    .replace_attached_obj(&e, obj_with(&[("data", Field::Number(2))]))
+                    .unwrap();
+                assert_eq!(returned, Field::Object(old));
+            }
+
+            /// Edge with small delta → ChangeEdgeData.
+            #[test]
+            fn edge_small_delta_emits_change() {
+                let mut g = Graph::default();
+                let leaf = obj_with(&[("a", Field::Null)]);
+                let n1 = g.add_node(leaf.clone());
+                let n2 = g.add_node(leaf);
+                let e = g.add_edge(n1, n2).unwrap();
+                g.attach_obj(
+                    e,
+                    obj_with(&[
+                        ("a", Field::Number(1)),
+                        ("b", Field::Number(2)),
+                        ("c", Field::Number(3)),
+                    ]),
+                )
+                .unwrap();
+
+                g.replace_attached_obj(
+                    &e,
+                    obj_with(&[
+                        ("a", Field::Number(1)),
+                        ("b", Field::Number(2)),
+                        ("c", Field::Number(99)),
+                    ]),
+                )
+                .unwrap();
+
+                match g.events.last().unwrap() {
+                    Patch::ChangeEdgeData { id, delta } => {
+                        assert_eq!(*id, e);
+                        assert_eq!(delta.len(), 1);
+                    }
+                    other => panic!("expected ChangeEdgeData, got {:?}", other),
+                }
+            }
+
+            /// Edge with large delta → UpsertEdgeData.
+            #[test]
+            fn edge_large_delta_emits_upsert() {
+                let mut g = Graph::default();
+                let leaf = obj_with(&[("a", Field::Null)]);
+                let n1 = g.add_node(leaf.clone());
+                let n2 = g.add_node(leaf);
+                let e = g.add_edge(n1, n2).unwrap();
+                g.attach_obj(
+                    e,
+                    obj_with(&[
+                        ("a", Field::Number(1)),
+                        ("b", Field::Number(2)),
+                        ("c", Field::Number(3)),
+                    ]),
+                )
+                .unwrap();
+
+                let new = obj_with(&[
+                    ("x", Field::Number(10)),
+                    ("y", Field::Number(20)),
+                    ("z", Field::Number(30)),
+                ]);
+                g.replace_attached_obj(&e, new.clone()).unwrap();
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::UpsertEdgeData { id: e, obj: new }
+                );
+            }
+
+            /// Hyperedge with small delta → ChangeHyperEdgeData.
+            #[test]
+            fn hyperedge_small_delta_emits_change() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("x", Field::Null)]));
+                let mut m = HashSet::new();
+                m.insert(n1.into());
+                let h = g.create_hyperedge(m).unwrap();
+                g.attach_obj(
+                    h,
+                    obj_with(&[("a", Field::Number(1)), ("b", Field::Number(2))]),
+                )
+                .unwrap();
+
+                g.replace_attached_obj(
+                    &h,
+                    obj_with(&[("a", Field::Number(1)), ("b", Field::Number(99))]),
+                )
+                .unwrap();
+
+                match g.events.last().unwrap() {
+                    Patch::ChangeHyperEdgeData { id, delta } => {
+                        assert_eq!(*id, h);
+                        assert_eq!(delta.len(), 1);
+                    }
+                    other => panic!("expected ChangeHyperEdgeData, got {:?}", other),
+                }
+            }
+
+            /// Hyperedge with large delta → UpsertHyperEdgeData.
+            #[test]
+            fn hyperedge_large_delta_emits_upsert() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(obj_with(&[("x", Field::Null)]));
+                let mut m = HashSet::new();
+                m.insert(n1.into());
+                let h = g.create_hyperedge(m).unwrap();
+                g.attach_obj(
+                    h,
+                    obj_with(&[
+                        ("a", Field::Number(1)),
+                        ("b", Field::Number(2)),
+                        ("c", Field::Number(3)),
+                    ]),
+                )
+                .unwrap();
+
+                let new = obj_with(&[
+                    ("x", Field::Number(10)),
+                    ("y", Field::Number(20)),
+                    ("z", Field::Number(30)),
+                ]);
+                g.replace_attached_obj(&h, new.clone()).unwrap();
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::UpsertHyperEdgeData { id: h, obj: new }
+                );
+            }
+
+            /// Path-pointee through the attach target gets cascaded if
+            /// the field it pointed at is dropped by the replacement.
+            #[test]
+            fn path_pointee_cascades_when_field_dropped() {
+                let mut g = Graph::default();
+                let leaf = obj_with(&[("a", Field::Null)]);
+                let n1 = g.add_node(leaf.clone());
+                let n2 = g.add_node(leaf);
+                let e = g.add_edge(n1, n2).unwrap();
+                g.attach_obj(e, obj_with(&[("data", Field::Number(1))]))
+                    .unwrap();
+
+                let n3 = g.add_node(obj_with(&[("a", Field::Null)]));
+                let path = Pointee::Path(GlobalObjPath::new(e, "data").unwrap());
+                let dangling = g.add_edge(n3, path.clone()).unwrap();
+
+                g.replace_attached_obj(&e, obj_with(&[("other", Field::Null)]))
+                    .unwrap();
+
+                assert!(g.edges.contains_key(&e));
+                assert!(!g.edges.contains_key(&dangling));
+                assert!(!g.entity_to_path_pointees.contains_key(&e));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Path-pointee survives when the referenced field is kept.
+            #[test]
+            fn path_pointee_survives_when_field_kept() {
+                let mut g = Graph::default();
+                let leaf = obj_with(&[("a", Field::Null)]);
+                let n1 = g.add_node(leaf.clone());
+                let n2 = g.add_node(leaf);
+                let e = g.add_edge(n1, n2).unwrap();
+                g.attach_obj(e, obj_with(&[("data", Field::Number(1))]))
+                    .unwrap();
+
+                let n3 = g.add_node(obj_with(&[("a", Field::Null)]));
+                let path = Pointee::Path(GlobalObjPath::new(e, "data").unwrap());
+                let kept = g.add_edge(n3, path.clone()).unwrap();
+
+                g.replace_attached_obj(&e, obj_with(&[("data", Field::Number(99))]))
+                    .unwrap();
+
+                assert!(g.edges.contains_key(&kept));
+                assert!(g.pointee_uses.contains_key(&path));
+                test_utils::check_index_invariant(&g);
+            }
+        }
+
+        mod test_retarget_edge {
+            use super::*;
+
+            /// Unknown edge id is rejected.
+            #[test]
+            fn unknown_edge() {
+                let mut g = Graph::default();
+                let n1 = g.add_node(test_utils::create_simple_obj("f"));
+                let err = g
+                    .retarget_edge(&Uuid::new_v4(), RetargetEdge::Source(n1.into()))
+                    .unwrap_err();
+                assert!(matches!(err, RetargetError::EdgeNotFound(_)));
+            }
+
+            /// New endpoint must resolve in the graph.
+            #[test]
+            fn invalid_target_pointee() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+                let e = g.add_edge(n1, n2).unwrap();
+
+                let err = g
+                    .retarget_edge(&e, RetargetEdge::Target(Pointee::EntityId(Uuid::new_v4())))
+                    .unwrap_err();
+                assert!(matches!(err, RetargetError::InvalidTarget(_)));
+                // Edge is unchanged.
+                assert_eq!(
+                    g.edges.get(&e),
+                    Some(&(Pointee::EntityId(n1), Pointee::EntityId(n2)))
+                );
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Retarget the source: edge updated, indexes swapped.
+            #[test]
+            fn retargets_source() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let n3 = g.add_node(obj);
+                let e = g.add_edge(n1, n2).unwrap();
+
+                g.retarget_edge(&e, RetargetEdge::Source(n3.into())).unwrap();
+
+                assert_eq!(
+                    g.edges.get(&e),
+                    Some(&(Pointee::EntityId(n3), Pointee::EntityId(n2)))
+                );
+                // Old source bucket is now empty (n1 had only this edge).
+                assert!(!g.pointee_uses.contains_key(&Pointee::EntityId(n1)));
+                // New source bucket has the edge.
+                assert!(g
+                    .pointee_uses
+                    .get(&Pointee::EntityId(n3))
+                    .is_some_and(|b| b.edges_as_source.contains(&e)));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Retarget the target: edge updated, indexes swapped.
+            #[test]
+            fn retargets_target() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let n3 = g.add_node(obj);
+                let e = g.add_edge(n1, n2).unwrap();
+
+                g.retarget_edge(&e, RetargetEdge::Target(n3.into())).unwrap();
+
+                assert_eq!(
+                    g.edges.get(&e),
+                    Some(&(Pointee::EntityId(n1), Pointee::EntityId(n3)))
+                );
+                assert!(!g.pointee_uses.contains_key(&Pointee::EntityId(n2)));
+                assert!(g
+                    .pointee_uses
+                    .get(&Pointee::EntityId(n3))
+                    .is_some_and(|b| b.edges_as_target.contains(&e)));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// No-op when the new endpoint equals the old one.
+            #[test]
+            fn no_op_same_endpoint() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+                let e = g.add_edge(n1, n2).unwrap();
+
+                g.retarget_edge(&e, RetargetEdge::Source(n1.into())).unwrap();
+
+                assert_eq!(
+                    g.edges.get(&e),
+                    Some(&(Pointee::EntityId(n1), Pointee::EntityId(n2)))
+                );
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Retargeting to a Path-pointee tracks it in
+            /// `entity_to_path_pointees`; removing the last reference
+            /// to the old path-pointee untracks it.
+            #[test]
+            fn path_endpoints_track_and_untrack() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("test_field");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let n3 = g.add_node(obj);
+
+                let old_path = Pointee::Path(GlobalObjPath::new(n2, "test_field").unwrap());
+                let e = g.add_edge(n1, old_path.clone()).unwrap();
+                assert!(g.entity_to_path_pointees.contains_key(&n2));
+
+                let new_path = Pointee::Path(GlobalObjPath::new(n3, "test_field").unwrap());
+                g.retarget_edge(&e, RetargetEdge::Target(new_path.clone()))
+                    .unwrap();
+
+                // Old path's entity untracked (was its only reference).
+                assert!(!g.entity_to_path_pointees.contains_key(&n2));
+                assert!(!g.pointee_uses.contains_key(&old_path));
+
+                // New path tracked.
+                assert!(g
+                    .entity_to_path_pointees
+                    .get(&n3)
+                    .is_some_and(|s| s.contains(&new_path)));
+                assert!(g.pointee_uses.contains_key(&new_path));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Self-loop: retargeting source while target equals source —
+            /// the bucket isn't lost mid-op since the same pointee is still
+            /// the target.
+            #[test]
+            fn self_loop_retarget_source_preserves_target_bucket() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj);
+                let e = g.add_edge(n1, n1).unwrap();
+
+                g.retarget_edge(&e, RetargetEdge::Source(n2.into())).unwrap();
+
+                assert_eq!(
+                    g.edges.get(&e),
+                    Some(&(Pointee::EntityId(n2), Pointee::EntityId(n1)))
+                );
+                // n1 still tracked as target.
+                assert!(g
+                    .pointee_uses
+                    .get(&Pointee::EntityId(n1))
+                    .is_some_and(|b| b.edges_as_target.contains(&e)));
+                test_utils::check_index_invariant(&g);
+            }
+
+            /// Records the patch.
+            #[test]
+            fn records_patch() {
+                let mut g = Graph::default();
+                let obj = test_utils::create_simple_obj("f");
+                let n1 = g.add_node(obj.clone());
+                let n2 = g.add_node(obj.clone());
+                let n3 = g.add_node(obj);
+                let e = g.add_edge(n1, n2).unwrap();
+
+                g.retarget_edge(&e, RetargetEdge::Target(n3.into())).unwrap();
+
+                assert_eq!(
+                    *g.events.last().unwrap(),
+                    Patch::RetargetEdge {
+                        id: e,
+                        new_target: RetargetEdge::Target(Pointee::EntityId(n3)),
+                    }
+                );
+            }
+        }
+    }
+
+    mod test_obj_apply_patch {
+        use super::*;
+
+        fn obj_with(fields: &[(&str, Field)]) -> Object {
+            let mut o = Object::new();
+            for (k, v) in fields {
+                o.insert((*k).into(), v.clone());
+            }
+            o
+        }
+
+        #[test]
+        fn unknown_id() {
+            let mut g = Graph::default();
+            let err = g
+                .obj_apply_patch(Uuid::new_v4(), vec![])
+                .unwrap_err();
+            assert!(matches!(err, DeltaError::NotFound(_)));
+        }
+
+        #[test]
+        fn empty_patch_is_noop() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("a", Field::Number(1))]));
+            g.obj_apply_patch(n1, vec![]).unwrap();
+            assert_eq!(g.obj(&n1), Some(&obj_with(&[("a", Field::Number(1))])));
+            test_utils::check_index_invariant(&g);
+        }
+
+        #[test]
+        fn add_field_on_fresh_key() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[]));
+            g.obj_apply_patch(
+                n1,
+                vec![ObjectPatch::AddField {
+                    name: "x".into(),
+                    field: Field::Number(7),
+                }],
+            )
+            .unwrap();
+            assert_eq!(g.obj(&n1).unwrap().get("x"), Some(&Field::Number(7)));
+        }
+
+        #[test]
+        fn add_field_on_existing_key_errors() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("x", Field::Number(1))]));
+            let err = g
+                .obj_apply_patch(
+                    n1,
+                    vec![ObjectPatch::AddField {
+                        name: "x".into(),
+                        field: Field::Number(7),
+                    }],
+                )
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                DeltaError::Delta(ObjectPatchError::FieldAlreadyExists { .. })
+            ));
+        }
+
+        #[test]
+        fn remove_field_existing() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("x", Field::Number(1)), ("y", Field::Null)]));
+            g.obj_apply_patch(
+                n1,
+                vec![ObjectPatch::RemoveField { name: "x".into() }],
+            )
+            .unwrap();
+            assert!(!g.obj(&n1).unwrap().contains_key("x"));
+            assert!(g.obj(&n1).unwrap().contains_key("y"));
+        }
+
+        #[test]
+        fn remove_field_missing_errors() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[]));
+            let err = g
+                .obj_apply_patch(n1, vec![ObjectPatch::RemoveField { name: "x".into() }])
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                DeltaError::Delta(ObjectPatchError::FieldNotFound { .. })
+            ));
+        }
+
+        #[test]
+        fn upsert_field_inserts_and_replaces() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("x", Field::Number(1))]));
+            g.obj_apply_patch(
+                n1,
+                vec![
+                    ObjectPatch::UpsertField {
+                        name: "x".into(),
+                        field: Field::Number(99),
+                    },
+                    ObjectPatch::UpsertField {
+                        name: "y".into(),
+                        field: Field::Null,
+                    },
+                ],
+            )
+            .unwrap();
+            assert_eq!(g.obj(&n1).unwrap().get("x"), Some(&Field::Number(99)));
+            assert_eq!(g.obj(&n1).unwrap().get("y"), Some(&Field::Null));
+        }
+
+        #[test]
+        fn array_patch_adds_and_removes() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[(
+                "arr",
+                Field::Array(vec![
+                    Field::Number(1),
+                    Field::Number(2),
+                    Field::Number(3),
+                ]),
+            )]));
+            g.obj_apply_patch(
+                n1,
+                vec![ObjectPatch::ArrayPatch {
+                    name: "arr".into(),
+                    removed_indices: vec![0],
+                    added_fields: vec![(2, Field::Number(99))],
+                }],
+            )
+            .unwrap();
+            // After remove(0): [2, 3]; after insert at 2: [2, 3, 99].
+            assert_eq!(
+                g.obj(&n1).unwrap().get("arr"),
+                Some(&Field::Array(vec![
+                    Field::Number(2),
+                    Field::Number(3),
+                    Field::Number(99),
+                ]))
+            );
+        }
+
+        #[test]
+        fn array_patch_on_non_array_errors() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("x", Field::Number(1))]));
+            let err = g
+                .obj_apply_patch(
+                    n1,
+                    vec![ObjectPatch::ArrayPatch {
+                        name: "x".into(),
+                        removed_indices: vec![],
+                        added_fields: vec![],
+                    }],
+                )
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                DeltaError::Delta(ObjectPatchError::NotAnArray { .. })
+            ));
+        }
+
+        #[test]
+        fn array_patch_index_out_of_bounds() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("arr", Field::Array(vec![Field::Number(1)]))]));
+            let err = g
+                .obj_apply_patch(
+                    n1,
+                    vec![ObjectPatch::ArrayPatch {
+                        name: "arr".into(),
+                        removed_indices: vec![5],
+                        added_fields: vec![],
+                    }],
+                )
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                DeltaError::Delta(ObjectPatchError::IndexOutOfBounds { index: 5 })
+            ));
+        }
+
+        #[test]
+        fn sub_object_patch_navigates_and_applies() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[(
+                "inner",
+                Field::Object(obj_with(&[("a", Field::Number(1))])),
+            )]));
+            g.obj_apply_patch(
+                n1,
+                vec![ObjectPatch::SubObjectPatch {
+                    path: LocalObjPath::new("inner").unwrap(),
+                    delta: vec![ObjectPatch::UpsertField {
+                        name: "a".into(),
+                        field: Field::Number(99),
+                    }],
+                }],
+            )
+            .unwrap();
+            match g.obj(&n1).unwrap().get("inner") {
+                Some(Field::Object(inner)) => {
+                    assert_eq!(inner.get("a"), Some(&Field::Number(99)));
+                }
+                _ => panic!("inner should be an Object"),
+            }
+        }
+
+        #[test]
+        fn sub_object_patch_through_non_object_errors() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("inner", Field::Number(1))]));
+            let err = g
+                .obj_apply_patch(
+                    n1,
+                    vec![ObjectPatch::SubObjectPatch {
+                        path: LocalObjPath::new("inner").unwrap(),
+                        delta: vec![],
+                    }],
+                )
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                DeltaError::Delta(ObjectPatchError::NotAnObject { .. })
+            ));
+        }
+
+        #[test]
+        fn cascades_path_pointees_after_field_removal() {
+            let mut g = Graph::default();
+            let n1 = g.add_node(obj_with(&[("data", Field::Number(1))]));
+            let n2 = g.add_node(obj_with(&[("a", Field::Null)]));
+            let path = Pointee::Path(GlobalObjPath::new(n1, "data").unwrap());
+            let e = g.add_edge(n2, path.clone()).unwrap();
+
+            g.obj_apply_patch(n1, vec![ObjectPatch::RemoveField { name: "data".into() }])
+                .unwrap();
+
+            // The Pointee::Path no longer resolves → cascade kills the edge.
+            assert!(!g.edges.contains_key(&e));
+            assert!(!g.pointee_uses.contains_key(&path));
+            assert!(g.is_exist(&n1));
+            test_utils::check_index_invariant(&g);
+        }
+    }
+
+    mod test_apply_patch {
+        use super::*;
+
+        /// Replay the recorded events on a fresh graph and assert
+        /// structural equality with the original.
+        fn assert_replay_matches(original: &Graph) {
+            let mut replayed = Graph::default();
+            replayed
+                .apply_patch(original.events.clone())
+                .expect("replay must succeed");
+            test_utils::check_index_invariant(&replayed);
+            assert_eq!(original.entities, replayed.entities, "entities mismatch");
+            assert_eq!(original.edges, replayed.edges, "edges mismatch");
+            assert_eq!(
+                original.hyper_edge, replayed.hyper_edge,
+                "hyper_edge mismatch"
+            );
+        }
+
+        #[test]
+        fn nodes_and_edges() {
+            let mut g = Graph::default();
+            let obj = test_utils::create_simple_obj("f");
+            let n1 = g.add_node(obj.clone());
+            let n2 = g.add_node(obj.clone());
+            let n3 = g.add_node(obj);
+            g.add_edge(n1, n2).unwrap();
+            g.add_edge(n3, n1).unwrap();
+
+            assert_replay_matches(&g);
+        }
+
+        #[test]
+        fn hyperedge_lifecycle() {
+            let mut g = Graph::default();
+            let obj = test_utils::create_simple_obj("f");
+            let n1 = g.add_node(obj.clone());
+            let n2 = g.add_node(obj.clone());
+            let n3 = g.add_node(obj);
+
+            let mut m = HashSet::new();
+            m.insert(n1.into());
+            m.insert(n2.into());
+            let h = g.create_hyperedge(m).unwrap();
+
+            let mut to_add = HashSet::new();
+            to_add.insert(n3.into());
+            g.add_hyperedge_members(h, to_add).unwrap();
+
+            let mut to_remove = HashSet::new();
+            to_remove.insert(n1.into());
+            g.remove_hyperedge_members(h, to_remove).unwrap();
+
+            assert_replay_matches(&g);
+        }
+
+        #[test]
+        fn attach_then_replace_attached() {
+            let mut g = Graph::default();
+            let obj = test_utils::create_simple_obj("f");
+            let n1 = g.add_node(obj.clone());
+            let n2 = g.add_node(obj.clone());
+            let e = g.add_edge(n1, n2).unwrap();
+            g.attach_obj(e, obj.clone()).unwrap();
+            // Replace with same key but different value → small delta path.
+            let mut new = Object::new();
+            new.insert("f".into(), Field::Number(42));
+            g.replace_attached_obj(&e, new).unwrap();
+
+            assert_replay_matches(&g);
+        }
+
+        #[test]
+        fn replace_node_change_path() {
+            let mut g = Graph::default();
+            let mut o1 = Object::new();
+            o1.insert("a".into(), Field::Number(1));
+            o1.insert("b".into(), Field::Number(2));
+            let n1 = g.add_node(o1);
+
+            let mut o2 = Object::new();
+            o2.insert("a".into(), Field::Number(1));
+            o2.insert("b".into(), Field::Number(99)); // small delta
+            g.replace_node(&n1, o2).unwrap();
+
+            assert_replay_matches(&g);
+        }
+
+        #[test]
+        fn replace_node_upsert_path() {
+            let mut g = Graph::default();
+            let mut o1 = Object::new();
+            o1.insert("a".into(), Field::Number(1));
+            let n1 = g.add_node(o1);
+
+            // 2 ops (Remove a, Add x) > 1 field → Upsert path.
+            let mut o2 = Object::new();
+            o2.insert("x".into(), Field::Number(99));
+            g.replace_node(&n1, o2).unwrap();
+
+            assert_replay_matches(&g);
+        }
+
+        #[test]
+        fn retarget_edge() {
+            let mut g = Graph::default();
+            let obj = test_utils::create_simple_obj("f");
+            let n1 = g.add_node(obj.clone());
+            let n2 = g.add_node(obj.clone());
+            let n3 = g.add_node(obj);
+            let e = g.add_edge(n1, n2).unwrap();
+            g.retarget_edge(&e, RetargetEdge::Target(n3.into())).unwrap();
+
+            assert_replay_matches(&g);
+        }
+
+        #[test]
+        fn remove_node_cascade_replays() {
+            let mut g = Graph::default();
+            let obj = test_utils::create_simple_obj("f");
+            let n1 = g.add_node(obj.clone());
+            let n2 = g.add_node(obj.clone());
+            let n3 = g.add_node(obj);
+            g.add_edge(n1, n2).unwrap();
+            g.add_edge(n3, n1).unwrap();
+            g.remove_node(&n1).unwrap();
+
+            assert_replay_matches(&g);
+        }
+
+        /// A patch whose precondition is violated propagates as an error.
+        #[test]
+        fn missing_precondition_errors() {
+            let mut g = Graph::default();
+            let err = g
+                .apply_patch(vec![Patch::RemoveNode { id: Uuid::new_v4() }])
+                .unwrap_err();
+            assert!(matches!(err, ApplyPatchError::NodeNotFound(_)));
         }
     }
 
