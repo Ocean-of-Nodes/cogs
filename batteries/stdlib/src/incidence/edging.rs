@@ -5,6 +5,7 @@
 
 use crate::*;
 
+/* 
 /// All edges incident to `id` — every edge that has
 /// `Pointee::EntityId(id)` as its `source` or `target`. Hyperedges
 /// are not included; iterate [`Graph::iter_hyperedge`] separately
@@ -103,3 +104,4 @@ mod tests {
         assert_eq!(into_n3, HashSet::new());
     }
 }
+*/

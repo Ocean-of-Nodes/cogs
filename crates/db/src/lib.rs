@@ -1,8 +1,3 @@
-mod hyperedge;
-mod incidence;
-mod methods;
-mod paths;
-
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -960,9 +955,6 @@ impl Graph {
 
     /* ------------ START DESTRUCTORS ----------- */
 
-    /// Clears the reverse index and cascades deletes all
-    /// that become dangling due to the disappearance of this
-    /// id (or its subpaths).
     /// Drains a single pointee bucket: removes referencing edges,
     /// strips the pointee from hyperedge memberships (killing
     /// hyperedges that empty out). New dangling structural ids are

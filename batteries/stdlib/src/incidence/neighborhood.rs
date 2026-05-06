@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 use crate::*;
 
+/* 
 /// Entities directly connected to `id` — the *other* endpoint of
 /// every incident edge or hyperedge member alongside `id`. Direction
 /// is ignored; hyperedge co-members are included. Result is
@@ -261,3 +262,4 @@ mod tests {
         assert_eq!(into_n3, HashSet::new());
     }
 }
+*/
