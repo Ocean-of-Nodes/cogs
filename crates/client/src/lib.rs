@@ -15,13 +15,13 @@ pub struct ImmutableGraph {
     entities: HashMap<EntityId, Object>,
 
     /// Hold graph edges
-    edges: HashMap<EdgeID, (EntityId, EntityId)>,
+    edges: HashMap<EdgeId, (EntityId, EntityId)>,
 
     /// Hold hyperedges
-    hyper_edge: HashMap<HyperEdgeId, Vec<EntityId>>,
+    hyper_edge: HashMap<HyperedgeId, Vec<EntityId>>,
 
     /// Tracks external endpoints of a hyperedge
-    external: HashMap<HyperEdgeId, Vec<EntityId>>, 
+    external: HashMap<HyperedgeId, Vec<EntityId>>, 
 }
 
 impl ImmutableGraph {
@@ -107,7 +107,7 @@ impl Client {
     pub async fn call(
         &self,
         name: String,
-        args: Vec<HyperEdgeId>,
+        args: Vec<HyperedgeId>,
     ) -> Result<ImmutableGraph, ClientCallError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = oneshot::channel();
@@ -124,11 +124,11 @@ impl Client {
         Ok(ImmutableGraph::new(snapshot))
     }
 
-    pub fn cold_view(&self, _name: String, _args: Vec<HyperEdgeId>) {
+    pub fn cold_view(&self, _name: String, _args: Vec<HyperedgeId>) {
         unimplemented!()
     }
 
-    pub async fn materialized(&self, _name: String, _args: Vec<HyperEdgeId>) {
+    pub async fn materialized(&self, _name: String, _args: Vec<HyperedgeId>) {
         unimplemented!()
     }
 

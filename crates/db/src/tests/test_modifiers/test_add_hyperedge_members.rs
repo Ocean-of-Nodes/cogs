@@ -8,7 +8,7 @@ fn unknown_hyperedge() {
     let mut m = HashSet::new();
     m.insert(n1.into());
     let err = g.add_hyperedge_members(Uuid::new_v4(), m).unwrap_err();
-    assert!(matches!(err, AddHyperedgeMembersError::HyperEdgeNotFound(_)));
+    assert!(matches!(err, AddHyperedgeMembersError::HyperedgeNotFound(_)));
 }
 
 /// Members that don't exist as pointees are rejected.
@@ -77,7 +77,7 @@ fn adds_members_and_records_patch() {
 
     assert_eq!(
         *g.events.last().unwrap(),
-        Patch::AddElementsToHyperEdge {
+        Patch::AddHyperedgeMembers {
             id: h,
             members: to_add,
         }

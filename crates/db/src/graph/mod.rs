@@ -67,11 +67,11 @@ pub(crate) struct Graph {
     /// only when [`Graph::attach_obj`] has been called on them.
     pub(crate) entities: HashMap<EntityId, Object>,
 
-    /// `EdgeID → (source, target)` pair.
-    pub(crate) edges: HashMap<EdgeID, (Pointee, Pointee)>,
+    /// `EdgeId → (source, target)` pair.
+    pub(crate) edges: HashMap<EdgeId, (Pointee, Pointee)>,
 
-    /// `HyperEdgeId → set of members`.
-    pub(crate) hyper_edge: HashMap<HyperEdgeId, HashSet<Pointee>>,
+    /// `HyperedgeId → set of members`.
+    pub(crate) hyper_edge: HashMap<HyperedgeId, HashSet<Pointee>>,
 
     /// Reverse index: for each [`Pointee`] referenced as an
     /// edge-endpoint or hyperedge-member, who references it.

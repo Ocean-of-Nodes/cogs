@@ -15,7 +15,7 @@ fn test_create_hyperedge() {
 
     assert_eq!(
         *g.events.last().unwrap(),
-        Patch::CreateHyperEdge { id: h, members: m }
+        Patch::CreateHyperedge { id: h, members: m }
     )
 }
 

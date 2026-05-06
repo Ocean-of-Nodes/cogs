@@ -5,7 +5,7 @@ use super::*;
 fn unknown_id() {
     let mut g = Graph::default();
     let err = g.remove_hyperedge(&Uuid::new_v4()).unwrap_err();
-    assert!(matches!(err, HyperEdgeNotFoundError { .. }));
+    assert!(matches!(err, HyperedgeNotFoundError { .. }));
 }
 
 /// Plain remove: hyperedge gone, members survive without
@@ -120,7 +120,7 @@ fn drops_attached_object() {
     test_utils::check_index_invariant(&g);
 }
 
-/// Records exactly one `Patch::RemoveHyperEdge` even on a cascade.
+/// Records exactly one `Patch::RemoveHyperedge` even on a cascade.
 #[test]
 fn records_single_patch_on_cascade() {
     let mut g = Graph::default();
@@ -136,11 +136,11 @@ fn records_single_patch_on_cascade() {
     g.remove_hyperedge(&h).unwrap();
 
     let last = g.events.last().unwrap();
-    assert_eq!(*last, Patch::RemoveHyperEdge { id: h });
+    assert_eq!(*last, Patch::RemoveHyperedge { id: h });
     let count = g
         .events
         .iter()
-        .filter(|p| matches!(p, Patch::RemoveHyperEdge { .. }))
+        .filter(|p| matches!(p, Patch::RemoveHyperedge { .. }))
         .count();
     assert_eq!(count, 1);
 }

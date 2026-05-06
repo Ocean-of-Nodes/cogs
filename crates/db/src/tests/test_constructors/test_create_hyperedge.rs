@@ -24,7 +24,7 @@ fn members_round_trip() {
 fn create_hyperedge_empty_rejected() {
     let mut g = Graph::default();
     let err = g.create_hyperedge(HashSet::new()).unwrap_err();
-    assert_eq!(err, CreateHyperEdgeError::EmptyHyperEdge);
+    assert_eq!(err, CreateHyperedgeError::EmptyHyperedge);
 }
 
 /// Members may include other hyperedges (nesting) and
@@ -56,7 +56,7 @@ fn create_hyperedge_already_exists() {
         .unwrap_err();
     assert_eq!(
         err,
-        CreateHyperEdgeError::HyperEdgeAlreadyExists(HyperEdgeAlreadyExistsError {
+        CreateHyperedgeError::HyperedgeAlreadyExists(HyperedgeAlreadyExistsError {
             id: h
         })
     );

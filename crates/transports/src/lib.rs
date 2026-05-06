@@ -276,14 +276,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::HyperEdgeId;
+    use protocol::HyperedgeId;
     use tokio::net::TcpListener;
 
-    fn arg_a() -> HyperEdgeId {
-        HyperEdgeId::from_u128(0xa)
+    fn arg_a() -> HyperedgeId {
+        HyperedgeId::from_u128(0xa)
     }
-    fn arg_b() -> HyperEdgeId {
-        HyperEdgeId::from_u128(0xb)
+    fn arg_b() -> HyperedgeId {
+        HyperedgeId::from_u128(0xb)
     }
 
     fn sample_call() -> OutFrame {

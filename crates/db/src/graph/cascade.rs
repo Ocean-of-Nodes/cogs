@@ -8,6 +8,35 @@ use common::*;
 use crate::graph::Graph;
 
 impl Graph {
+    /// Strip an edge's id from both its endpoints' reverse-index
+    /// buckets. If `skip` is set, the matching endpoint is left
+    /// untouched (callers that already removed/will remove the
+    /// `skip` bucket themselves use this).
+    ///
+    /// When a bucket becomes empty after the removal, it is dropped
+    /// from `pointee_uses` and untracked from `entity_to_path_pointees`.
+    pub(crate) fn unregister_edge_from_endpoints(
+        &mut self,
+        eid: &EdgeId,
+        source: &Pointee,
+        target: &Pointee,
+        skip: Option<&Pointee>,
+    ) {
+        for endpoint in [source, target] {
+            if Some(endpoint) == skip {
+                continue;
+            }
+            if let Some(bucket) = self.pointee_uses.get_mut(endpoint) {
+                bucket.edges_as_source.remove(eid);
+                bucket.edges_as_target.remove(eid);
+                if bucket.is_empty() {
+                    self.pointee_uses.remove(endpoint);
+                    self.untrack_pointee_entity(endpoint);
+                }
+            }
+        }
+    }
+
     /// Drains a single pointee bucket: removes referencing edges,
     /// strips the pointee from hyperedge memberships (killing
     /// hyperedges that empty out). New dangling structural ids are
@@ -21,7 +50,7 @@ impl Graph {
             return;
         };
 
-        let dead_edges: HashSet<EdgeID> = uses
+        let dead_edges: HashSet<EdgeId> = uses
             .edges_as_source
             .iter()
             .chain(uses.edges_as_target.iter())
@@ -29,19 +58,8 @@ impl Graph {
             .collect();
         for eid in dead_edges {
             if let Some((src, tgt)) = self.edges.remove(&eid) {
-                for endpoint in [&src, &tgt] {
-                    if endpoint == pointee {
-                        continue;
-                    }
-                    if let Some(bucket) = self.pointee_uses.get_mut(endpoint) {
-                        bucket.edges_as_source.remove(&eid);
-                        bucket.edges_as_target.remove(&eid);
-                        if bucket.is_empty() {
-                            self.pointee_uses.remove(endpoint);
-                            self.untrack_pointee_entity(endpoint);
-                        }
-                    }
-                }
+                // The drained `pointee` bucket is already gone — skip it.
+                self.unregister_edge_from_endpoints(&eid, &src, &tgt, Some(pointee));
                 self.entities.remove(&eid);
                 worklist.push(eid);
             }

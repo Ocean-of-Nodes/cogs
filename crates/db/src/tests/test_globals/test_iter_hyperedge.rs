@@ -10,7 +10,7 @@ fn test_iter_hyperedge() {
     // No duplicates — `hyper_edge` is a HashMap, but
     // assert anyway in case the impl chains in extra
     // sources later.
-    let mut counts: HashMap<HyperEdgeId, usize> = HashMap::new();
+    let mut counts: HashMap<HyperedgeId, usize> = HashMap::new();
     for id in &actual {
         *counts.entry(*id).or_insert(0) += 1;
     }

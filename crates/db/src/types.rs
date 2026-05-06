@@ -7,7 +7,7 @@ use common::*;
 /// Returned by [`crate::Graph::edge`] and [`crate::Graph::remove_edge`].
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Triplet {
-    pub id: EdgeID,
+    pub id: EdgeId,
     pub source: Pointee,
     pub target: Pointee,
 }
@@ -47,14 +47,14 @@ impl EntityType {
     pub(crate) fn is_attach_target(&self) -> bool {
         match self {
             EntityType::Node | EntityType::AttachedObject => false,
-            EntityType::Edge | EntityType::HyperEdge | EntityType::MetaEdge => true,
+            EntityType::Edge | EntityType::Hyperedge | EntityType::MetaEdge => true,
         }
     }
 
     /// Whether this entity kind can carry an `Object` payload.
     pub(crate) fn can_contain_object(&self) -> bool {
         match self {
-            EntityType::Node | EntityType::Edge | EntityType::HyperEdge | EntityType::MetaEdge => {
+            EntityType::Node | EntityType::Edge | EntityType::Hyperedge | EntityType::MetaEdge => {
                 true
             }
             EntityType::AttachedObject => false,
@@ -67,7 +67,7 @@ impl std::fmt::Display for EntityType {
         f.write_str(match self {
             EntityType::Node => "Node",
             EntityType::Edge => "Edge",
-            EntityType::HyperEdge => "HyperEdge",
+            EntityType::Hyperedge => "HyperEdge",
             EntityType::MetaEdge => "MetaEdge",
             EntityType::AttachedObject => "AttachedObject",
         })

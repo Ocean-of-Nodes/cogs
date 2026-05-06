@@ -9,7 +9,7 @@ fn yields_all_edges_in_sample_graph() {
 
     // No duplicates (HashMap keys can't repeat, but we
     // assert anyway in case the impl changes).
-    let mut counts: HashMap<EdgeID, usize> = HashMap::new();
+    let mut counts: HashMap<EdgeId, usize> = HashMap::new();
     for id in &actual {
         *counts.entry(*id).or_insert(0) += 1;
     }

@@ -158,7 +158,7 @@ fn hyperedge_small_delta_emits_change() {
     .unwrap();
 
     match g.events.last().unwrap() {
-        Patch::ChangeHyperEdgeData { id, delta } => {
+        Patch::ChangeHyperedgeData { id, delta } => {
             assert_eq!(*id, h);
             assert_eq!(delta.len(), 1);
         }
@@ -193,7 +193,7 @@ fn hyperedge_large_delta_emits_upsert() {
 
     assert_eq!(
         *g.events.last().unwrap(),
-        Patch::UpsertHyperEdgeData { id: h, obj: new }
+        Patch::UpsertHyperedgeData { id: h, obj: new }
     );
 }
 

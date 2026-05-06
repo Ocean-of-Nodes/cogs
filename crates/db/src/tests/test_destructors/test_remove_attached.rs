@@ -73,7 +73,7 @@ fn removes_hyperedge_attached() {
     assert!(!g.entities.contains_key(&h));
     assert_eq!(
         *g.events.last().unwrap(),
-        Patch::RemoveHyperEdgeData { id: h }
+        Patch::RemoveHyperedgeData { id: h }
     );
     test_utils::check_index_invariant(&g);
 }
@@ -147,7 +147,7 @@ fn records_single_patch_on_cascade() {
         .filter(|p| {
             matches!(
                 p,
-                Patch::RemoveEdgeData { .. } | Patch::RemoveHyperEdgeData { .. }
+                Patch::RemoveEdgeData { .. } | Patch::RemoveHyperedgeData { .. }
             )
         })
         .count();

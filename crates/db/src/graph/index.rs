@@ -13,11 +13,11 @@ use crate::graph::Graph;
 #[derive(Default)]
 pub(crate) struct PointeeUses {
     /// Edges whose `source` is this pointee.
-    pub(crate) edges_as_source: HashSet<EdgeID>,
+    pub(crate) edges_as_source: HashSet<EdgeId>,
     /// Edges whose `target` is this pointee.
-    pub(crate) edges_as_target: HashSet<EdgeID>,
+    pub(crate) edges_as_target: HashSet<EdgeId>,
     /// Hyperedges that include this pointee as a member.
-    pub(crate) hyperedges: HashSet<HyperEdgeId>,
+    pub(crate) hyperedges: HashSet<HyperedgeId>,
 }
 
 impl PointeeUses {

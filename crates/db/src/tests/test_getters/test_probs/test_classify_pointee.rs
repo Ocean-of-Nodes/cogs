@@ -19,7 +19,7 @@ fn entity_edge() {
 fn entity_hyperedge() {
     let (g, _n1, _n2, _n3, _n4, _e_a, _e_b, _meta_edge, _edge_to_h, h) =
         test_utils::create_sample_graph2();
-    assert_eq!(g.classify_pointee(&h.into()), Some(PointeeKind::HyperEdge));
+    assert_eq!(g.classify_pointee(&h.into()), Some(PointeeKind::Hyperedge));
 }
 
 #[test]

@@ -15,8 +15,8 @@ use common::*;
 
 /// The id is not currently a hyperedge in the graph.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct HyperEdgeNotFoundError {
-    pub id: HyperEdgeId,
+pub(crate) struct HyperedgeNotFoundError {
+    pub id: HyperedgeId,
 }
 
 /// The id is not a known entity (node, edge, or hyperedge).
@@ -35,7 +35,7 @@ pub(crate) struct NodeNotFoundError {
 /// The id is not a known edge.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct EdgeNotFoundError {
-    pub id: EdgeID,
+    pub id: EdgeId,
 }
 
 /// `add_node` (or replay of the same) collided with an existing id.
@@ -46,14 +46,14 @@ pub(crate) struct NodeAlreadyExistsError {
 
 /// `silent_create_hyperedge_with_id` collided with an existing id.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HyperEdgeAlreadyExistsError {
-    pub id: HyperEdgeId,
+pub(crate) struct HyperedgeAlreadyExistsError {
+    pub id: HyperedgeId,
 }
 
 /// `silent_add_edge_with_id` collided with an existing id.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct EdgeAlreadyExistsError {
-    pub id: EdgeID,
+    pub id: EdgeId,
 }
 
 /// One or both endpoints of an edge being added do not currently
@@ -99,7 +99,7 @@ pub(crate) struct IncorrectTypeError {
 /// `attach_obj` was called on an id that doesn't exist at all.
 #[derive(Debug)]
 pub(crate) struct AttachTargetNotFoundError {
-    pub id: AttachTargetID,
+    pub id: AttachTargetId,
 }
 
 /// `remove_attached` / `replace_attached_obj` was called on an id
@@ -108,13 +108,13 @@ pub(crate) struct AttachTargetNotFoundError {
 /// object) or as a node.
 #[derive(Debug)]
 pub(crate) struct NoAttachedObjectError {
-    pub id: AttachTargetID,
+    pub id: AttachTargetId,
 }
 
 /// `retarget_edge` was given a new endpoint that doesn't resolve.
 #[derive(Debug)]
 pub(crate) struct InvalidRetargetError {
-    pub edge_id: EdgeID,
+    pub edge_id: EdgeId,
     pub new_target: RetargetEdge,
 }
 
@@ -122,13 +122,13 @@ pub(crate) struct InvalidRetargetError {
 
 /// Errors returned by [`crate::Graph::create_hyperedge`].
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum CreateHyperEdgeError {
+pub(crate) enum CreateHyperedgeError {
     /// At least one member pointee doesn't exist.
     PointeesNotFound(PointeesNotFoundError),
     /// The chosen id is already taken by another hyperedge.
-    HyperEdgeAlreadyExists(HyperEdgeAlreadyExistsError),
+    HyperedgeAlreadyExists(HyperedgeAlreadyExistsError),
     /// Empty membership is rejected — every hyperedge has ≥1 member.
-    EmptyHyperEdge,
+    EmptyHyperedge,
 }
 
 /// Errors returned by [`crate::Graph::add_edge`].
@@ -169,7 +169,7 @@ pub(crate) enum GetEdgeError {
 #[derive(Debug)]
 pub(crate) enum AddHyperedgeMembersError {
     /// The hyperedge id doesn't exist.
-    HyperEdgeNotFound(HyperEdgeNotFoundError),
+    HyperedgeNotFound(HyperedgeNotFoundError),
     /// Some passed pointees are already members.
     MembersAlreadyExist(MembersAlreadyExistError),
     /// Some passed pointees don't exist as graph entities.
@@ -180,7 +180,7 @@ pub(crate) enum AddHyperedgeMembersError {
 #[derive(Debug)]
 pub(crate) enum RemoveHyperedgeMembersError {
     /// The hyperedge id doesn't exist.
-    HyperEdgeNotFound(HyperEdgeNotFoundError),
+    HyperedgeNotFound(HyperedgeNotFoundError),
     /// Some passed pointees aren't current members.
     MembersNotInHyperedge(MembersNotInHyperedgeError),
 }
@@ -220,10 +220,10 @@ pub(crate) enum DeltaError {
 pub(crate) enum ApplyPatchError {
     NodeAlreadyExists(NodeAlreadyExistsError),
     AddEdge(AddEdgeError),
-    CreateHyperEdge(CreateHyperEdgeError),
+    CreateHyperEdge(CreateHyperedgeError),
     NodeNotFound(NodeNotFoundError),
     EdgeNotFound(EdgeNotFoundError),
-    HyperEdgeNotFound(HyperEdgeNotFoundError),
+    HyperedgeNotFound(HyperedgeNotFoundError),
     Retarget(RetargetError),
     Change(DeltaError),
     AddHyperedgeMembers(AddHyperedgeMembersError),
@@ -249,8 +249,8 @@ impl From<AddEdgeError> for ApplyPatchError {
     }
 }
 
-impl From<CreateHyperEdgeError> for ApplyPatchError {
-    fn from(e: CreateHyperEdgeError) -> Self {
+impl From<CreateHyperedgeError> for ApplyPatchError {
+    fn from(e: CreateHyperedgeError) -> Self {
         Self::CreateHyperEdge(e)
     }
 }
@@ -267,9 +267,9 @@ impl From<EdgeNotFoundError> for ApplyPatchError {
     }
 }
 
-impl From<HyperEdgeNotFoundError> for ApplyPatchError {
-    fn from(e: HyperEdgeNotFoundError) -> Self {
-        Self::HyperEdgeNotFound(e)
+impl From<HyperedgeNotFoundError> for ApplyPatchError {
+    fn from(e: HyperedgeNotFoundError) -> Self {
+        Self::HyperedgeNotFound(e)
     }
 }
 

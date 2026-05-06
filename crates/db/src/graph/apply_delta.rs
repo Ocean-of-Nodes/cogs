@@ -54,23 +54,23 @@ impl Graph {
                 Patch::UpsertEdgeData { id, obj } => self.silent_upsert_attached_obj(id, obj)?,
                 Patch::ChangeEdgeData { id, delta } => self.apply_object_delta(id, delta)?,
                 Patch::RemoveEdgeData { id } => self.silent_remove_attached(id)?,
-                Patch::CreateHyperEdge { id, members } => {
+                Patch::CreateHyperedge { id, members } => {
                     self.silent_create_hyperedge_with_id(&id, members)?
                 }
-                Patch::RemoveHyperEdge { id } => {
+                Patch::RemoveHyperedge { id } => {
                     self.silent_remove_hyperedge(&id)?;
                 }
-                Patch::AddElementsToHyperEdge { id, members } => {
+                Patch::AddHyperedgeMembers { id, members } => {
                     self.silent_add_hyperedge_members(id, members)?
                 }
-                Patch::RemoveElementsFromHyperEdge { id, members } => {
+                Patch::RemoveHyperedgeMembers { id, members } => {
                     self.silent_remove_hyperedge_members(id, members)?
                 }
-                Patch::UpsertHyperEdgeData { id, obj } => {
+                Patch::UpsertHyperedgeData { id, obj } => {
                     self.silent_upsert_attached_obj(id, obj)?
                 }
-                Patch::ChangeHyperEdgeData { id, delta } => self.apply_object_delta(id, delta)?,
-                Patch::RemoveHyperEdgeData { id } => self.silent_remove_attached(id)?,
+                Patch::ChangeHyperedgeData { id, delta } => self.apply_object_delta(id, delta)?,
+                Patch::RemoveHyperedgeData { id } => self.silent_remove_attached(id)?,
             }
         }
 

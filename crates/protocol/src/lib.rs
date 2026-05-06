@@ -14,12 +14,12 @@ pub enum OutFrame {
     Call {
         id: RequestId,
         name: String,
-        args: Vec<HyperEdgeId>,
+        args: Vec<HyperedgeId>,
     },
     
     Subscribe {
         sub: SubId,
-        name: HyperEdgeId,
+        name: HyperedgeId,
     },
     Unsubscribe {
         sub: SubId,
@@ -27,7 +27,7 @@ pub enum OutFrame {
     
     Cold {
         id: RequestId,
-        name: HyperEdgeId,
+        name: HyperedgeId,
     },
     ColdRequestDelta {
         id: RequestId,
@@ -43,7 +43,7 @@ pub enum CallError {
     /// Content correct number of args
     IncorrectNumberOfArgs(u8),
     /// Content not founded hyper edges
-    ArgumentNotFound(Vec<HyperEdgeId>)
+    ArgumentNotFound(Vec<HyperedgeId>)
 }
 
 /// Wire frame type of incoming msg.

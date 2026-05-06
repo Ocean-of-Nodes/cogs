@@ -8,7 +8,7 @@ use uuid::Uuid;
 use common::*;
 
 use crate::errors::{
-    AddEdgeError, CreateHyperEdgeError, EdgeAlreadyExistsError, HyperEdgeAlreadyExistsError,
+    AddEdgeError, CreateHyperedgeError, EdgeAlreadyExistsError, HyperedgeAlreadyExistsError,
     MissingEndpointsError, NodeAlreadyExistsError, PointeesNotFoundError,
 };
 use crate::graph::Graph;
@@ -16,29 +16,23 @@ use crate::graph::Graph;
 impl Graph {
     pub(crate) fn silent_create_hyperedge_with_id(
         &mut self,
-        id: &HyperEdgeId,
+        id: &HyperedgeId,
         members: HashSet<Pointee>,
-    ) -> Result<(), CreateHyperEdgeError> {
+    ) -> Result<(), CreateHyperedgeError> {
         if members.is_empty() {
-            return Err(CreateHyperEdgeError::EmptyHyperEdge);
+            return Err(CreateHyperedgeError::EmptyHyperedge);
         }
 
         if self.hyper_edge.contains_key(id) {
-            return Err(CreateHyperEdgeError::HyperEdgeAlreadyExists(
-                HyperEdgeAlreadyExistsError { id: id.clone() },
+            return Err(CreateHyperedgeError::HyperedgeAlreadyExists(
+                HyperedgeAlreadyExistsError { id: id.clone() },
             ));
         }
 
-        let mut unexist = HashSet::new();
-        for member in members.iter() {
-            if !self.is_pointee_exist(member) {
-                unexist.insert(member.clone());
-            }
-        }
-
-        if !unexist.is_empty() {
-            return Err(CreateHyperEdgeError::PointeesNotFound(
-                PointeesNotFoundError { pointees: unexist },
+        let missing = self.collect_missing_pointees(&members);
+        if !missing.is_empty() {
+            return Err(CreateHyperedgeError::PointeesNotFound(
+                PointeesNotFoundError { pointees: missing },
             ));
         }
 
@@ -60,14 +54,14 @@ impl Graph {
 
     /// Create a hyperedge containing the given non-empty set of
     /// existing pointees. Generates a new id and records
-    /// [`Patch::CreateHyperEdge`].
+    /// [`Patch::CreateHyperedge`].
     pub fn create_hyperedge(
         &mut self,
         members: HashSet<Pointee>,
-    ) -> Result<HyperEdgeId, CreateHyperEdgeError> {
+    ) -> Result<HyperedgeId, CreateHyperedgeError> {
         let id = Uuid::new_v4();
         self.silent_create_hyperedge_with_id(&id, members.clone())?;
-        self.emit_patch(Patch::CreateHyperEdge { id, members });
+        self.emit_patch(Patch::CreateHyperedge { id, members });
         Ok(id)
     }
 
@@ -146,7 +140,7 @@ impl Graph {
         &mut self,
         source: impl Into<Pointee>,
         target: impl Into<Pointee>,
-    ) -> Result<EdgeID, AddEdgeError> {
+    ) -> Result<EdgeId, AddEdgeError> {
         let source_pointee = source.into();
         let target_pointee = target.into();
         let edge_id = Uuid::new_v4();

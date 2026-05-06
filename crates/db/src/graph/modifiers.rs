@@ -10,7 +10,7 @@ use common::*;
 
 use crate::errors::{
     AddHyperedgeMembersError, AttachObjectError, AttachTargetNotFoundError, EdgeNotFoundError,
-    HyperEdgeNotFoundError, IncorrectTypeError, InvalidRetargetError, MembersAlreadyExistError,
+    HyperedgeNotFoundError, IncorrectTypeError, InvalidRetargetError, MembersAlreadyExistError,
     MembersNotInHyperedgeError, NoAttachedObjectError, NodeNotFoundError, PointeesNotFoundError,
     RemoveHyperedgeMembersError, RetargetError,
 };
@@ -22,7 +22,7 @@ use crate::types::EntityType;
 impl Graph {
     pub(crate) fn silent_attach_obj(
         &mut self,
-        target: AttachTargetID,
+        target: AttachTargetId,
         obj: Object,
     ) -> Result<(), AttachObjectError> {
         let ty = match self.get_type(target) {
@@ -38,7 +38,7 @@ impl Graph {
                 entity_id: target,
                 expected_type: vec![
                     EntityType::Edge.to_string(),
-                    EntityType::HyperEdge.to_string(),
+                    EntityType::Hyperedge.to_string(),
                     EntityType::MetaEdge.to_string(),
                 ],
                 actual_type: ty.to_string(),
@@ -52,10 +52,10 @@ impl Graph {
     /// Attach an `Object` payload on top of an edge or hyperedge.
     /// Strict — fails with `IncorrectType` if the target already has
     /// an attached object (use `replace_attached_obj` for that).
-    /// Records [`Patch::UpsertEdgeData`] or [`Patch::UpsertHyperEdgeData`].
+    /// Records [`Patch::UpsertEdgeData`] or [`Patch::UpsertHyperedgeData`].
     pub fn attach_obj(
         &mut self,
-        target: AttachTargetID,
+        target: AttachTargetId,
         obj: Object,
     ) -> Result<(), AttachObjectError> {
         // Resolve target type *before* mutating so we can pick the
@@ -66,7 +66,7 @@ impl Graph {
         self.silent_attach_obj(target, obj.clone())?;
 
         if is_hyper {
-            self.emit_patch(Patch::UpsertHyperEdgeData { id: target, obj });
+            self.emit_patch(Patch::UpsertHyperedgeData { id: target, obj });
         } else {
             // MetaEdge is structurally an edge, so it lives in `self.edges`.
             self.emit_patch(Patch::UpsertEdgeData { id: target, obj });
@@ -76,21 +76,16 @@ impl Graph {
 
     pub(crate) fn silent_add_hyperedge_members(
         &mut self,
-        id: HyperEdgeId,
+        id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), AddHyperedgeMembersError> {
         if !self.hyper_edge.contains_key(&id) {
-            return Err(AddHyperedgeMembersError::HyperEdgeNotFound(
-                HyperEdgeNotFoundError { id },
+            return Err(AddHyperedgeMembersError::HyperedgeNotFound(
+                HyperedgeNotFoundError { id },
             ));
         }
 
-        let mut missing: HashSet<Pointee> = HashSet::new();
-        for p in &m {
-            if !self.is_pointee_exist(p) {
-                missing.insert(p.clone());
-            }
-        }
+        let missing = self.collect_missing_pointees(&m);
         if !missing.is_empty() {
             return Err(AddHyperedgeMembersError::PointeesNotFound(
                 PointeesNotFoundError { pointees: missing },
@@ -130,22 +125,22 @@ impl Graph {
 
     pub fn add_hyperedge_members(
         &mut self,
-        id: HyperEdgeId,
+        id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), AddHyperedgeMembersError> {
         self.silent_add_hyperedge_members(id, m.clone())?;
-        self.emit_patch(Patch::AddElementsToHyperEdge { id, members: m });
+        self.emit_patch(Patch::AddHyperedgeMembers { id, members: m });
         Ok(())
     }
 
     pub(crate) fn silent_remove_hyperedge_members(
         &mut self,
-        id: HyperEdgeId,
+        id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), RemoveHyperedgeMembersError> {
         let Some(current) = self.hyper_edge.get(&id) else {
-            return Err(RemoveHyperedgeMembersError::HyperEdgeNotFound(
-                HyperEdgeNotFoundError { id },
+            return Err(RemoveHyperedgeMembersError::HyperedgeNotFound(
+                HyperedgeNotFoundError { id },
             ));
         };
 
@@ -192,11 +187,11 @@ impl Graph {
 
     pub fn remove_hyperedge_members(
         &mut self,
-        id: HyperEdgeId,
+        id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), RemoveHyperedgeMembersError> {
         self.silent_remove_hyperedge_members(id, m.clone())?;
-        self.emit_patch(Patch::RemoveElementsFromHyperEdge { id, members: m });
+        self.emit_patch(Patch::RemoveHyperedgeMembers { id, members: m });
         Ok(())
     }
 
@@ -246,7 +241,7 @@ impl Graph {
     /// patches — replay must work for both initial attach and replace.
     pub(crate) fn silent_upsert_attached_obj(
         &mut self,
-        id: AttachTargetID,
+        id: AttachTargetId,
         obj: Object,
     ) -> Result<(), AttachObjectError> {
         let ty = match self.get_type(id) {
@@ -262,7 +257,7 @@ impl Graph {
         if !matches!(
             ty,
             EntityType::Edge
-                | EntityType::HyperEdge
+                | EntityType::Hyperedge
                 | EntityType::MetaEdge
                 | EntityType::AttachedObject
         ) {
@@ -270,7 +265,7 @@ impl Graph {
                 entity_id: id,
                 expected_type: vec![
                     EntityType::Edge.to_string(),
-                    EntityType::HyperEdge.to_string(),
+                    EntityType::Hyperedge.to_string(),
                     EntityType::MetaEdge.to_string(),
                 ],
                 actual_type: ty.to_string(),
@@ -297,7 +292,7 @@ impl Graph {
     ///   their references via [`cascade_invalid_paths_through`].
     pub(crate) fn silent_set_attached_obj(
         &mut self,
-        id: AttachTargetID,
+        id: AttachTargetId,
         new: Option<Object>,
     ) -> Result<Option<Object>, NoAttachedObjectError> {
         if !self.has_attached_object(&id) {
@@ -320,7 +315,7 @@ impl Graph {
 
     pub(crate) fn silent_replace_attached_obj(
         &mut self,
-        id: &AttachTargetID,
+        id: &AttachTargetId,
         obj: Object,
     ) -> Result<Object, NoAttachedObjectError> {
         // The unified op guarantees `Some(old)` because
@@ -338,7 +333,7 @@ impl Graph {
     /// count.
     pub fn replace_attached_obj(
         &mut self,
-        id: &AttachTargetID,
+        id: &AttachTargetId,
         obj: Object,
     ) -> Result<Field, NoAttachedObjectError> {
         let new_field_count = obj.len();
@@ -349,11 +344,11 @@ impl Graph {
         let use_change = delta.len() <= new_field_count;
 
         match (kind, use_change) {
-            (Some(AttachKind::HyperEdge), true) => {
-                self.emit_patch(Patch::ChangeHyperEdgeData { id: *id, delta })
+            (Some(AttachKind::Hyperedge), true) => {
+                self.emit_patch(Patch::ChangeHyperedgeData { id: *id, delta })
             }
-            (Some(AttachKind::HyperEdge), false) => {
-                self.emit_patch(Patch::UpsertHyperEdgeData { id: *id, obj })
+            (Some(AttachKind::Hyperedge), false) => {
+                self.emit_patch(Patch::UpsertHyperedgeData { id: *id, obj })
             }
             (Some(AttachKind::Edge), true) => {
                 self.emit_patch(Patch::ChangeEdgeData { id: *id, delta })

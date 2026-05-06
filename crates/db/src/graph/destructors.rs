@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use common::*;
 
 use crate::errors::{
-    EdgeNotFoundError, HyperEdgeNotFoundError, NoAttachedObjectError, NodeNotFoundError,
+    EdgeNotFoundError, HyperedgeNotFoundError, NoAttachedObjectError, NodeNotFoundError,
 };
 use crate::graph::AttachKind;
 use crate::types::Triplet;
@@ -45,27 +45,14 @@ impl Graph {
     // `apply_patch` and for direct construction inside `remove_edge`.
     pub(crate) fn silent_remove_edge(
         &mut self,
-        id: &EdgeID,
+        id: &EdgeId,
     ) -> Result<Triplet, EdgeNotFoundError> {
         let (source, target) = self
             .edges
             .remove(id)
             .ok_or(EdgeNotFoundError { id: *id })?;
 
-        // Strip eid from both endpoints' buckets; clean up empty buckets.
-        for (endpoint, is_source) in [(&source, true), (&target, false)] {
-            if let Some(bucket) = self.pointee_uses.get_mut(endpoint) {
-                if is_source {
-                    bucket.edges_as_source.remove(id);
-                } else {
-                    bucket.edges_as_target.remove(id);
-                }
-                if bucket.is_empty() {
-                    self.pointee_uses.remove(endpoint);
-                    self.untrack_pointee_entity(endpoint);
-                }
-            }
-        }
+        self.unregister_edge_from_endpoints(id, &source, &target, None);
 
         // Drop attached object on this edge, if any.
         self.entities.remove(id);
@@ -80,7 +67,7 @@ impl Graph {
     /// Remove an edge by id. The edge's reverse-index entries are
     /// cleaned up. Records [`Patch::RemoveEdge`].
     /// Returns the [`Triplet`] of the removed edge.
-    pub fn remove_edge(&mut self, id: &EdgeID) -> Result<Triplet, EdgeNotFoundError> {
+    pub fn remove_edge(&mut self, id: &EdgeId) -> Result<Triplet, EdgeNotFoundError> {
         let res = self.silent_remove_edge(id)?;
         self.emit_patch(Patch::RemoveEdge { id: *id });
         Ok(res)
@@ -88,12 +75,12 @@ impl Graph {
 
     pub(crate) fn silent_remove_hyperedge(
         &mut self,
-        hid: &HyperEdgeId,
-    ) -> Result<HashSet<Pointee>, HyperEdgeNotFoundError> {
+        hid: &HyperedgeId,
+    ) -> Result<HashSet<Pointee>, HyperedgeNotFoundError> {
         let members = self
             .hyper_edge
             .remove(hid)
-            .ok_or(HyperEdgeNotFoundError { id: *hid })?;
+            .ok_or(HyperedgeNotFoundError { id: *hid })?;
 
         // Strip `hid` from each member's reverse-index bucket.
         for member in &members {
@@ -120,13 +107,13 @@ impl Graph {
     /// Remove a hyperedge by id. Cascades to anything that
     /// referenced it (edges, parent hyperedges that lose this
     /// member and become empty). Records one
-    /// [`Patch::RemoveHyperEdge`]. Returns the previous member set.
+    /// [`Patch::RemoveHyperedge`]. Returns the previous member set.
     pub fn remove_hyperedge(
         &mut self,
-        hid: &HyperEdgeId,
-    ) -> Result<HashSet<Pointee>, HyperEdgeNotFoundError> {
+        hid: &HyperedgeId,
+    ) -> Result<HashSet<Pointee>, HyperedgeNotFoundError> {
         let members = self.silent_remove_hyperedge(hid)?;
-        self.emit_patch(Patch::RemoveHyperEdge { id: *hid });
+        self.emit_patch(Patch::RemoveHyperedge { id: *hid });
         Ok(members)
     }
 
@@ -136,7 +123,7 @@ impl Graph {
     /// references that depended on the attached object's fields.
     pub(crate) fn silent_remove_attached(
         &mut self,
-        target: AttachTargetID,
+        target: AttachTargetId,
     ) -> Result<(), NoAttachedObjectError> {
         self.silent_set_attached_obj(target, None).map(|_| ())
     }
@@ -145,7 +132,7 @@ impl Graph {
     /// the corresponding `Remove*Data` patch.
     pub fn remove_attached(
         &mut self,
-        target: AttachTargetID,
+        target: AttachTargetId,
     ) -> Result<(), NoAttachedObjectError> {
         // Resolve the kind *before* the silent op — the structure
         // stays alive after the call, but kind resolution is a
@@ -156,8 +143,8 @@ impl Graph {
 
         match kind {
             Some(AttachKind::Edge) => self.emit_patch(Patch::RemoveEdgeData { id: target }),
-            Some(AttachKind::HyperEdge) => {
-                self.emit_patch(Patch::RemoveHyperEdgeData { id: target })
+            Some(AttachKind::Hyperedge) => {
+                self.emit_patch(Patch::RemoveHyperedgeData { id: target })
             }
             None => {}
         }

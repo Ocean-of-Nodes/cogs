@@ -24,7 +24,7 @@ fn rejects_node() {
         .events
         .iter()
         .filter(|p| {
-            matches!(p, Patch::UpsertEdgeData { .. } | Patch::UpsertHyperEdgeData { .. })
+            matches!(p, Patch::UpsertEdgeData { .. } | Patch::UpsertHyperedgeData { .. })
         })
         .count();
     assert_eq!(extra_events, 0);
@@ -86,7 +86,7 @@ fn records_upsert_hyperedge_data() {
 
     assert_eq!(
         *g.events.last().unwrap(),
-        Patch::UpsertHyperEdgeData {
+        Patch::UpsertHyperedgeData {
             id: h,
             obj: attached,
         }

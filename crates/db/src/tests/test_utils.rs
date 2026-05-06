@@ -135,12 +135,12 @@ pub fn create_sample_graph1() -> (
     NodeId,
     NodeId,
     NodeId,
-    EdgeID,
-    EdgeID,
-    EdgeID,
-    EdgeID,
-    EdgeID,
-    HyperEdgeId,
+    EdgeId,
+    EdgeId,
+    EdgeId,
+    EdgeId,
+    EdgeId,
+    HyperedgeId,
 ) {
     let mut g = Graph::default();
     let obj = create_simple_obj("test_field");
@@ -184,11 +184,11 @@ pub fn create_sample_graph2() -> (
     NodeId,
     NodeId,
     NodeId,
-    EdgeID,
-    EdgeID,
-    EdgeID,
-    EdgeID,
-    HyperEdgeId,
+    EdgeId,
+    EdgeId,
+    EdgeId,
+    EdgeId,
+    HyperedgeId,
 ) {
     let mut graph = Graph::default();
     let obj = test_utils::create_simple_obj("test_field");
@@ -227,10 +227,10 @@ pub fn create_sample_graph3() -> (
     NodeId,
     NodeId,
     NodeId,
-    EdgeID,
-    EdgeID,
-    EdgeID,
-    EdgeID,
+    EdgeId,
+    EdgeId,
+    EdgeId,
+    EdgeId,
 ) {
     let mut graph = Graph::default();
     let obj = test_utils::create_simple_obj("attached");

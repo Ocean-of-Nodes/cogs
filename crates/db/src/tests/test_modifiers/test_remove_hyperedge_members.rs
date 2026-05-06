@@ -7,7 +7,7 @@ fn unknown_hyperedge() {
     let mut m = HashSet::new();
     m.insert(Pointee::EntityId(Uuid::new_v4()));
     let err = g.remove_hyperedge_members(Uuid::new_v4(), m).unwrap_err();
-    assert!(matches!(err, RemoveHyperedgeMembersError::HyperEdgeNotFound(_)));
+    assert!(matches!(err, RemoveHyperedgeMembersError::HyperedgeNotFound(_)));
 }
 
 /// Removing a pointee that's not a current member is rejected,
@@ -62,7 +62,7 @@ fn removes_subset_and_records_patch() {
 
     assert_eq!(
         *g.events.last().unwrap(),
-        Patch::RemoveElementsFromHyperEdge {
+        Patch::RemoveHyperedgeMembers {
             id: h,
             members: to_remove,
         }

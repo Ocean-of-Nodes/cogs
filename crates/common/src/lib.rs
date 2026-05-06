@@ -34,15 +34,15 @@ impl From<EntityId> for Pointee {
 
 /// Target edges/metaedge/hyperedge for thats object 
 /// can be attached 
-pub type AttachTargetID = Uuid;
+pub type AttachTargetId = Uuid;
 /// Node is an ends of edges that's not edge,
 /// but contains data as object
 pub type NodeId = Uuid;
 /// Edge is an entity that contains data as
 /// object and link between two entities
-pub type EdgeID = Uuid;
+pub type EdgeId = Uuid;
 /// Hyper edge thats hold some entities
-pub type HyperEdgeId = Uuid;
+pub type HyperedgeId = Uuid;
 
 pub type Object = HashMap<String, Field>;
 
@@ -118,58 +118,58 @@ pub enum Patch {
 
     // --------------- START EDGE DELTA ----------
     AddEdge {
-        id: EdgeID,
+        id: EdgeId,
         source: Pointee,
         target: Pointee,
     },
     RemoveEdge {
-        id: EdgeID,
+        id: EdgeId,
     },
     RetargetEdge {
-        id: EdgeID,
+        id: EdgeId,
         new_target: RetargetEdge,
     },
     UpsertEdgeData {
-        id: EdgeID,
+        id: EdgeId,
         obj: Object,
     },
     ChangeEdgeData {
-        id: EdgeID,
+        id: EdgeId,
         delta: Vec<ObjectPatch>,
     },
     RemoveEdgeData {
-        id: EdgeID,
+        id: EdgeId,
     },
 
     // ------------- END EDGE DELTA --------------
 
     // ------------- START HYPER EDGE --------------
     
-    CreateHyperEdge {
-        id: HyperEdgeId,
+    CreateHyperedge {
+        id: HyperedgeId,
         members: HashSet<Pointee>,
     },
-    RemoveHyperEdge {
-        id: HyperEdgeId,
+    RemoveHyperedge {
+        id: HyperedgeId,
     },
-    AddElementsToHyperEdge {
-        id: HyperEdgeId,
+    AddHyperedgeMembers {
+        id: HyperedgeId,
         members: HashSet<Pointee>,
     },
-    RemoveElementsFromHyperEdge {
-        id: HyperEdgeId,
+    RemoveHyperedgeMembers {
+        id: HyperedgeId,
         members: HashSet<Pointee>,
     },
-    UpsertHyperEdgeData {
-        id: HyperEdgeId,
+    UpsertHyperedgeData {
+        id: HyperedgeId,
         obj: Object,
     },
-    ChangeHyperEdgeData {
-        id: HyperEdgeId,
+    ChangeHyperedgeData {
+        id: HyperedgeId,
         delta: Vec<ObjectPatch>,
     },
-    RemoveHyperEdgeData {
-        id: HyperEdgeId,
+    RemoveHyperedgeData {
+        id: HyperedgeId,
     },
 
     // ------------- END HYPER EDGE --------------
