@@ -20,6 +20,6 @@ mod test_getters;
 mod test_globals;
 mod test_modifiers;
 
-mod lift_events;
+mod patch_logging;
 mod test_apply_delta;
 mod test_apply_object_delta;
