@@ -6,5 +6,10 @@ members = [
     "crates/protocol",
     "crates/transports",
     "crates/common",
+    "crates/storage",
+    "crates/sdk",
+    "crates/sdk-macros",
+    "crates/jit",
     # "batteries/common",  # TEMPORARILY COMMENTED — directory missing
 ]
+exclude = ["examples/hello_view"]

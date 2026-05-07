@@ -70,26 +70,37 @@ Ok, lets create new folder `hellow-view`.
 Next, create `Cargo.toml` with following code:
 
 ```toml
-[package]
-name = "hellow-view"
+name = "hello_view"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
+
+[dependencies]
+sdk = { path = "../../crates/sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+
+[workspace]
 ```
 
 Ok, next create file `src/lib.rs` with following content:
 
 ```rust
+    use sdk::{Field, Graph, Object, view};
+
     #[view]
-    fn hellow_view(main: &mut Graph) {
+    fn hello_view(g: &mut Graph) {
         let mut obj = Object::new();
-        obj.insert("Hello", Field::String("World".string()));
-        
-        main.add_node(obj.clone());
+        obj.insert("Hello".to_string(), Field::String("World".to_string()));
+        g.add_node(obj);
     }
 ```
+
+Ok, we just wrote function thats chang graph thats function call `mutator`.
 
 ### 
 In traditional databases, views are created using schemas and modified by queries. COGs use functions to create views.
@@ -103,9 +114,7 @@ You use macro `view` for marking function. That's create new a incrimental mater
     }
 ```
 
-You can path singl graph parameter thats mean that root (whole graph) be used as parameter. 
-
-Also function can chang graph without return new `view` thats function call `mutator`.
+You can path singl graph parameter thats mean that root (whole graph) be used as parameter.
 
 Data base can also contain `procedure` it interface the same as `view` function. The different that procedure doesnt recall by observed (captured) space changes. Insted this function can be called by client by three different way: fist snapshot based - function call once and return result; second - update by recall, the first time you call it, you get a snapshot, later, when you call it again, you get delta patches; third - observation, the first time you call it, you receive a snapshot, then, with each change in the database, it automatically sends you a delta patch.
 
