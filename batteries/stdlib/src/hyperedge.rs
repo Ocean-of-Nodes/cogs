@@ -57,6 +57,9 @@ fn disassemble_into_edges(g: &mut Graph, h: HyperEdgeId) -> Option<HyperEdgeNotF
     Some(HyperEdgeNotFound(h))
 }
 
+fn disassemble_from_edges() {
+}
+
 /// Merge multiple edges into hyperedge
 ///
 /// Accept `reducer` that accept acc(hyperedge attached) the first parameter and
