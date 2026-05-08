@@ -12,14 +12,14 @@
 
 ## Key Features
 
-| Feature | Description | Status |
-| --- | --- | :---: |
-| **Powerful data model** | Designed around the needs of language tools | ✅ |
-| **Delta-patch persistence** | State is captured as a stream of deltas | ✅ |
+| Feature                               | Description                                    |  Status    |
+| ------------------------------------- | ---------------------------------------------- | ---------- |
+| **Powerful data model**               | Designed around the needs of language tools    |     ✅     |
+| **Delta-patch persistence**           | State is captured as a stream of deltas        |     ✅     |
 | **Rust dialect instead of query DSL** | Write queries in the language you already know | 🚧 Partial |
-| **JIT on board** | Storage-aware and code-aware optimization | 🚧 Partial |
-| **Disk persistence** | Persist state to disk | ⏳ Planned |
-| **DLT (Diagnostic Log and Trace)** | Machine-readable diagnostics (JSON) | ⏳ Planned |
+| **JIT on board**                      | Storage-aware and code-aware optimization      | 🚧 Partial |
+| **Disk persistence**                  | Persist state to disk                          | ⏳ Planned |
+| **DLT (Diagnostic Log and Trace)**    | Machine-readable diagnostics (JSON)            | ⏳ Planned |
 
 ---
 
