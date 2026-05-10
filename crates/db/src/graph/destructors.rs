@@ -17,7 +17,7 @@ impl Graph {
     pub(crate) fn silent_remove_node(
         &mut self,
         id: &NodeId,
-    ) -> Result<Field, NodeNotFoundError> {
+    ) -> Result<Object, NodeNotFoundError> {
         if !self.is_node(id) {
             return Err(NodeNotFoundError { id: *id });
         }
@@ -26,17 +26,17 @@ impl Graph {
             .remove(id)
             .ok_or(NodeNotFoundError { id: *id })?;
         self.cascade_remove_entity(*id);
-        Ok(Field::Object(obj))
+        Ok(obj)
     }
 
     /// Remove a node and cascade-delete every edge / hyperedge that
     /// referenced it (directly or via a `Pointee::Path`). Records
     /// one [`Patch::RemoveNode`] regardless of cascade depth.
     /// Returns the node's previous object as `Field::Object`.
-    pub fn remove_node(&mut self, id: &NodeId) -> Result<Field, NodeNotFoundError> {
-        let field = self.silent_remove_node(id)?;
+    pub fn remove_node(&mut self, id: &NodeId) -> Result<Object, NodeNotFoundError> {
+        let obj = self.silent_remove_node(id)?;
         self.record_patch(Patch::RemoveNode { id: *id });
-        Ok(field)
+        Ok(obj)
     }
 
     // NOTE: visibility was tightened from `pub` to `pub(crate)`. External

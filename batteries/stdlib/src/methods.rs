@@ -19,6 +19,10 @@ pub fn swap(g: &mut Graph, lhs: EntityId, rhs: EntityId) -> Result<(), SwapError
     todo!()
 }
 
+pub fn make_empty() {
+
+}
+
 https://www.quantamagazine.org/researchers-achieve-absurdly-fast-algorithm-for-network-flow-20220608/
 
 */

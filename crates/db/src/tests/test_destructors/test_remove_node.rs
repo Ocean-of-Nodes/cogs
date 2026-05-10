@@ -15,7 +15,7 @@ fn returns_object() {
     let obj = test_utils::create_simple_obj("f");
     let n1 = g.add_node(obj.clone());
     let returned = g.remove_node(&n1).unwrap();
-    assert_eq!(returned, Field::Object(obj));
+    assert_eq!(returned, obj);
     assert!(!g.is_exist(&n1));
     test_utils::check_index_invariant(&g);
 }

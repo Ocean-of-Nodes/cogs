@@ -9,6 +9,15 @@ use crate::errors::{EntityNotFoundError, GetEdgeError, IncorrectTypeError};
 use crate::types::{EntityType, PointeeKind, EdgeView};
 use crate::graph::Graph;
 
+/// Which structural kind an attach-target belongs to. Drives the
+/// choice between the `Edge*Data` and `HyperEdge*Data` patch families.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AttachKind {
+    Edge,
+    Hyperedge,
+}
+
+
 impl Graph {
     // ------------ ROOTS ------------------- //
 
@@ -262,12 +271,4 @@ impl Graph {
             .cloned()
             .collect()
     }
-}
-
-/// Which structural kind an attach-target belongs to. Drives the
-/// choice between the `Edge*Data` and `HyperEdge*Data` patch families.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AttachKind {
-    Edge,
-    Hyperedge,
 }
