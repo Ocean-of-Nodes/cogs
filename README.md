@@ -2,7 +2,7 @@
 
 # COG's
 
-![Logo](readme_asserts/logo.webp)
+![Gears](readme_asserts/gears.svg)
 
 *A database purpose-built for language tooling — translators (disassemblers, transpilers, compilers), IDEs, static analyzers, symbolic execution engines, and the like.*
 
