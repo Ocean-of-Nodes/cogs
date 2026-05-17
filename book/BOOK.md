@@ -53,6 +53,8 @@ An *attached object* is an `Object` that piggy-backs on top of an edge or hypere
 
 # Coding model
 
+![Cog function](func.jpg)
+
 So, how to interact with the database using code and organize it?
 
 ## Dialect and not query DSL
