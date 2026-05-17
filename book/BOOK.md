@@ -1,5 +1,7 @@
 # Data Model
 
+![Bone structure](bone_structure.jpg)
+
 COG implements its own data model with node, edges and hyperedges.
 
 ## Nodes
