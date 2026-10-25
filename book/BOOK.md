@@ -61,6 +61,57 @@ So, how to interact with the database using code and organize it?
 
 Instead of creating a query language, COG's proposes a Rust dialect. When we say dialect, we mean that the Rust side provides intrinsics and macros that will be processed by the JIT.
 
+### Kind of functions
+
+The database supports the following types of entities `mutator`, `view`, `procedure`. 
+- `mutator` provides data
+- `view` is a pure function that takes `space`'s and form new `space` as result
+- `procedure` is pure function that takes `object`'s and return anonymous `space`
+
+### Mutator
+
+Something populates the database. Such functions are called `mutator`. 
+
+```rust
+    #[mutator]
+    fn 
+```
+
+#### View
+
+In traditional databases, views are created using schemas and modified by queries. COGs use functions to create views.
+Look at the example `hellow_view`
+
+```rust
+    #[view]
+    fn hellow_view(#[name = "graph1"] g1: Graph, #[name = "graph2"] g2: Graph) -> Graph {
+        ...
+    }
+```
+We see the `name` attribute with value. Each `view` function creates a hypergraph with an attach object with a field `name` which repeats the function name. That is, in this example `hellow_view`. 
+
+If you need to return multiple graphs, use a tuple with attributes.
+
+```rust
+    #[view]
+    fn hellow_view(#[name = "graph1"] g1: Graph, #[name = "graph2"] g2: Graph) -> (#[name = "graph3"] Graph, #[name = "graph4"] Graph) {
+        ...
+    }
+```
+
+A graph without a `name` attribute will pass the root graph (whole graph).
+
+### Pocedure
+
+Database can also contain `procedure`. The procedure takes N object as parameters and returns an anonymous graph, meaning it is not stored in the database, but is only transmitted to the client
+
+```rust
+    #[procedure]
+    fn hover(obj1: Object, obj2: Object ...) -> Graph {
+        ...
+    }
+```
+
 ## DB stored code
 
 ### For what?
@@ -159,27 +210,4 @@ and a single `item` is added, naive reactivity sees that `items` changed and rer
 
 Independently of how the source code looks, the *graph of derived values* must stay acyclic — `a` cannot depend on `b` while `b` depends on `a`, because there is no fixed order in which to recompute them. Feedback between reactive values is expressed as an explicit time step (a new version of the graph), not as a cycle in the dependency graph.
 
-<!-- TODO -->
-
-# Input
-
-Something populates the database. Such functions are called `inputs`. Inputs are asynchronous functions that will cause a recalculation in the database at the moment async is triggered.
-
-
-In traditional databases, views are created using schemas and modified by queries. COGs use functions to create views.
-
-You use macro `view` for marking function. That's create new a incrimental materialized view. That is, this is the function fn(g1, g2, ...) -> gr, that's accept some spaces.
-
-```rust
-    #[view]
-    fn hellow_view(#[path = "/graph1"] g1: Graph, #[path = "/graph1"] g2: Graph) -> Graph {
-
-    }
-```
-
-You can path singl graph parameter thats mean that root (whole graph) be used as parameter.
-
-Data base can also contain `procedure` it interface the same as `view` function. The different that procedure doesnt recall by observed (captured) space changes. Insted this function can be called by client by three different way: fist snapshot based - function call once and return result; second - update by recall, the first time you call it, you get a snapshot, later, when you call it again, you get delta patches; third - observation, the first time you call it, you receive a snapshot, then, with each change in the database, it automatically sends you a delta patch.
-
-# Queries
 
