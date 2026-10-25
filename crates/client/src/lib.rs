@@ -107,7 +107,7 @@ impl Client {
     pub async fn call(
         &self,
         name: String,
-        args: Vec<HyperedgeId>,
+        args: Vec<Object>,
     ) -> Result<ImmutableGraph, ClientCallError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (reply_tx, reply_rx) = oneshot::channel();

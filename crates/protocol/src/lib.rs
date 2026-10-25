@@ -14,7 +14,7 @@ pub enum OutFrame {
     Call {
         id: RequestId,
         name: String,
-        args: Vec<HyperedgeId>,
+        args: Vec<Object>,
     },
     
     Subscribe {
