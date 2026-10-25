@@ -99,6 +99,16 @@ If you need to return multiple graphs, use a tuple with attributes.
     }
 ```
 
+Or vector of `(String, Graph)`
+
+```rust
+    #[view]
+    fn hellow_view(#[name = "graph1"] g1: Graph, #[name = "graph2"] g2: Graph) -> Vec<(String, Graph)> {
+        ...
+    }
+```
+
+
 A graph without a `name` attribute will pass the root graph (whole graph).
 
 ### Pocedure
