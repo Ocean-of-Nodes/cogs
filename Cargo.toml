@@ -11,4 +11,4 @@ members = [
     "crates/jit",
     # "batteries/common",  # TEMPORARILY COMMENTED — directory missing
 ]
-exclude = ["examples/hello_view"]
+exclude = ["examples/hello_view", "examples/graph_view"]

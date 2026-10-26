@@ -8,4 +8,5 @@ common = { path = "../common" }
 db = { path = "../db" }
 wasmtime = { version = "26", default-features = false, features = ["cranelift", "runtime"] }
 bincode = "1"
+serde = "1"
 anyhow = "1"

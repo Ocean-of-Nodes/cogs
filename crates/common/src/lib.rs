@@ -1,3 +1,4 @@
+pub mod abi;
 pub mod global_path;
 pub mod local_path;
 
@@ -330,4 +331,39 @@ impl From<&FullPatch> for ThinPatch {
     fn from(patch: &FullPatch) -> Self {
         patch.clone().into()
     }
+}
+
+/// A complete description of an edge — its id and both endpoints.
+/// Returned by `db::Graph::edge` and `db::Graph::remove_edge`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EdgeView {
+    pub id: EdgeId,
+    pub source: Pointee,
+    pub target: Pointee,
+}
+
+/// Classification of a [`Pointee`]. Mirrors `db::EntityType` for the
+/// `Pointee::EntityId` case and adds [`PointeeKind::Subobject`] for
+/// the `Pointee::Path` case.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub enum PointeeKind {
+    Node,
+    Edge,
+    Hyperedge,
+    MetaEdge,
+    AttachedObject,
+    Subobject,
+}
+
+/// One entry of the db event log: a mutation and everything its
+/// cascade removed. Returned by `db::Graph::undo`.
+#[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]
+pub struct Modification {
+    /// Everything the cascade of this mutation removed — whole
+    /// edges/hyperedges and members stripped from surviving
+    /// hyperedges — in the order it happened (after `operation`).
+    pub cascade: FullDelta,
+
+    /// Main patch for this mutation.
+    pub operation: FullPatch,
 }

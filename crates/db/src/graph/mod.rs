@@ -64,16 +64,7 @@ pub(crate) use queries::AttachKind;
 /// remove the listener via [`Graph::unsubscribe_on_change`].
 pub(crate) type ListenerId = Uuid;
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub struct Modification {
-    /// Everything the cascade of this mutation removed — whole
-    /// edges/hyperedges and members stripped from surviving
-    /// hyperedges — in the order it happened (after `operation`).
-    pub cascade: FullDelta,
-
-    /// Main patch for this mutation.
-    pub operation: FullPatch,
-}
+pub use common::Modification;
 
 #[derive(Default)]
 pub struct Graph {

@@ -1,16 +1,7 @@
 //! Domain taxonomy types: how the graph distinguishes nodes, edges,
 //! hyperedges, and friends.
 
-use common::*;
-
-/// A complete description of an edge — its id and both endpoints.
-/// Returned by [`crate::Graph::edge`] and [`crate::Graph::remove_edge`].
-#[derive(Debug, PartialEq, Eq)]
-pub struct EdgeView {
-    pub id: EdgeId,
-    pub source: Pointee,
-    pub target: Pointee,
-}
+pub use common::{EdgeView, PointeeKind};
 
 /// Internal classification of an [`EntityId`] — what kind of entity
 /// it represents within the graph's storage model.
@@ -26,19 +17,6 @@ pub enum EntityType {
     /// i.e. an edge or hyperedge with `attach_obj` already called on
     /// it.
     AttachedObject,
-}
-
-/// Classification of a [`Pointee`]. Mirrors [`EntityType`] for the
-/// `Pointee::EntityId` case and adds [`PointeeKind::Subobject`] for
-/// the `Pointee::Path` case.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum PointeeKind {
-    Node,
-    Edge,
-    Hyperedge,
-    MetaEdge,
-    AttachedObject,
-    Subobject,
 }
 
 impl EntityType {
