@@ -1,18 +1,15 @@
 //! Host runtime for COG WASM modules.
 //!
 //! Loads a `.wasm` produced from the `sdk` dialect, links host
-//! intrinsics (`__cog_*`) against a [`Storage`], discovers every
+//! intrinsics (`__cog_*`) against a [`Graph`], discovers every
 //! `__cog_view_*` export and invokes them in module-declaration
 //! order.
 //!
-//! For the prototype the JIT bypasses the semantic `db` layer and
-//! writes directly to `Storage` — every intrinsic takes the "raw"
-//! path. Once `db` exists as a checked wrapper we'll select between
-//! checked/raw bindings per module based on static analysis.
+//! Every intrinsic goes through the checked public API of `db`.
 
 use anyhow::{Context, Result};
 use common::Object;
-use storage::Storage;
+use db::Graph;
 use wasmtime::{Caller, Engine, Linker, Module, Store};
 
 const VIEW_EXPORT_PREFIX: &str = "__cog_view_";
@@ -28,7 +25,7 @@ impl Default for Runtime {
 }
 
 struct HostState {
-    storage: Storage,
+    graph: Graph,
 }
 
 impl Runtime {
@@ -38,10 +35,10 @@ impl Runtime {
         }
     }
 
-    /// Load `wasm_bytes`, link host intrinsics against `storage`,
-    /// invoke every `__cog_view_*` export, and return the storage
+    /// Load `wasm_bytes`, link host intrinsics against `graph`,
+    /// invoke every `__cog_view_*` export, and return the graph
     /// with mutations applied.
-    pub fn run_views(&self, wasm_bytes: &[u8], storage: Storage) -> Result<Storage> {
+    pub fn run_views(&self, wasm_bytes: &[u8], graph: Graph) -> Result<Graph> {
         let module = Module::new(&self.engine, wasm_bytes).context("compile wasm module")?;
 
         let view_exports: Vec<String> = module
@@ -54,7 +51,7 @@ impl Runtime {
             anyhow::bail!("module has no `{VIEW_EXPORT_PREFIX}*` exports");
         }
 
-        let mut store = Store::new(&self.engine, HostState { storage });
+        let mut store = Store::new(&self.engine, HostState { graph });
         let mut linker: Linker<HostState> = Linker::new(&self.engine);
 
         linker
@@ -72,8 +69,7 @@ impl Runtime {
                         .context("read guest memory")?;
                     let obj: Object =
                         bincode::deserialize(&bytes).context("decode Object payload")?;
-                    let id = storage::fresh_id();
-                    caller.data_mut().storage.put_node(id, obj);
+                    caller.data_mut().graph.add_node(obj);
                     Ok(())
                 },
             )
@@ -91,6 +87,6 @@ impl Runtime {
                 .with_context(|| format!("`{export_name}` trapped"))?;
         }
 
-        Ok(store.into_data().storage)
+        Ok(store.into_data().graph)
     }
 }

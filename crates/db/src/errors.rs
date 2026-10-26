@@ -15,79 +15,79 @@ use common::*;
 
 /// The id is not currently a hyperedge in the graph.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct HyperedgeNotFoundError {
+pub struct HyperedgeNotFoundError {
     pub id: HyperedgeId,
 }
 
 /// The id is not a known entity (node, edge, or hyperedge).
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct EntityNotFoundError {
+pub struct EntityNotFoundError {
     pub id: EntityId,
 }
 
 /// The id is not a known node — it might be missing entirely, or
 /// it might exist as an edge / hyperedge / attached-object id.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct NodeNotFoundError {
+pub struct NodeNotFoundError {
     pub id: NodeId,
 }
 
 /// The id is not a known edge.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct EdgeNotFoundError {
+pub struct EdgeNotFoundError {
     pub id: EdgeId,
 }
 
 /// `add_node` (or replay of the same) collided with an existing id.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NodeAlreadyExistsError {
+pub struct NodeAlreadyExistsError {
     pub id: NodeId,
 }
 
 /// `silent_create_hyperedge_with_id` collided with an existing id.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct HyperedgeAlreadyExistsError {
+pub struct HyperedgeAlreadyExistsError {
     pub id: HyperedgeId,
 }
 
 /// `silent_add_edge_with_id` collided with an existing id.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct EdgeAlreadyExistsError {
+pub struct EdgeAlreadyExistsError {
     pub id: EdgeId,
 }
 
 /// One or both endpoints of an edge being added do not currently
 /// resolve to an existing pointee.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct MissingEndpointsError {
+pub struct MissingEndpointsError {
     /// The endpoints that failed `is_pointee_exist`.
     pub missing_endpoints: Vec<Pointee>,
 }
 
 /// One or more pointees passed to a hyperedge op do not exist.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct PointeesNotFoundError {
+pub struct PointeesNotFoundError {
     pub pointees: HashSet<Pointee>,
 }
 
 /// `add_hyperedge_members` was asked to insert pointees that are
 /// already members of the hyperedge.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct MembersAlreadyExistError {
+pub struct MembersAlreadyExistError {
     pub members: Vec<Pointee>,
 }
 
 /// `remove_hyperedge_members` was asked to drop pointees that are
 /// not currently members of the hyperedge.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct MembersNotInHyperedgeError {
+pub struct MembersNotInHyperedgeError {
     pub members: Vec<Pointee>,
 }
 
 /// Type-check failure: the id resolved to an entity whose kind is
 /// not in the operation's accepted set.
 #[derive(Debug)]
-pub(crate) struct IncorrectTypeError {
+pub struct IncorrectTypeError {
     /// The id whose type didn't match.
     pub entity_id: EntityId,
     /// Human-readable list of accepted entity types.
@@ -98,7 +98,7 @@ pub(crate) struct IncorrectTypeError {
 
 /// `attach_obj` was called on an id that doesn't exist at all.
 #[derive(Debug)]
-pub(crate) struct AttachTargetNotFoundError {
+pub struct AttachTargetNotFoundError {
     pub id: AttachTargetId,
 }
 
@@ -107,13 +107,13 @@ pub(crate) struct AttachTargetNotFoundError {
 /// exist, or it exists as a bare structural element (no attached
 /// object) or as a node.
 #[derive(Debug)]
-pub(crate) struct NoAttachedObjectError {
+pub struct NoAttachedObjectError {
     pub id: AttachTargetId,
 }
 
 /// `retarget_edge` was given a new endpoint that doesn't resolve.
 #[derive(Debug)]
-pub(crate) struct InvalidRetargetError {
+pub struct InvalidRetargetError {
     pub edge_id: EdgeId,
     pub new_target: RetargetEdge,
 }
@@ -122,7 +122,7 @@ pub(crate) struct InvalidRetargetError {
 
 /// Errors returned by [`crate::Graph::create_hyperedge`].
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum CreateHyperedgeError {
+pub enum CreateHyperedgeError {
     /// At least one member pointee doesn't exist.
     PointeesNotFound(PointeesNotFoundError),
     /// The chosen id is already taken by another hyperedge.
@@ -133,21 +133,21 @@ pub(crate) enum CreateHyperedgeError {
 
 /// Errors returned by [`crate::Graph::add_edge`].
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum AddEdgeError {
+pub enum AddEdgeError {
     MissingEndpoints(MissingEndpointsError),
     EdgeAlreadyExists(EdgeAlreadyExistsError),
 }
 
 /// Errors returned by [`crate::Graph::retarget_edge`].
 #[derive(Debug)]
-pub(crate) enum RetargetError {
+pub enum RetargetError {
     EdgeNotFound(EdgeNotFoundError),
     InvalidTarget(InvalidRetargetError),
 }
 
 /// Errors returned by [`crate::Graph::attach_obj`].
 #[derive(Debug)]
-pub(crate) enum AttachObjectError {
+pub enum AttachObjectError {
     /// Target id doesn't exist anywhere in the graph.
     AttachTargetNotFound(AttachTargetNotFoundError),
     /// Target exists but isn't a valid attach target (e.g. it's a
@@ -158,7 +158,7 @@ pub(crate) enum AttachObjectError {
 
 /// Errors returned by [`crate::Graph::edge`].
 #[derive(Debug)]
-pub(crate) enum GetEdgeError {
+pub enum GetEdgeError {
     /// Id doesn't exist in the graph.
     NotFound(EntityNotFoundError),
     /// Id exists but isn't an edge.
@@ -167,7 +167,7 @@ pub(crate) enum GetEdgeError {
 
 /// Errors returned by [`crate::Graph::add_hyperedge_members`].
 #[derive(Debug)]
-pub(crate) enum AddHyperedgeMembersError {
+pub enum AddHyperedgeMembersError {
     /// The hyperedge id doesn't exist.
     HyperedgeNotFound(HyperedgeNotFoundError),
     /// Some passed pointees are already members.
@@ -178,7 +178,7 @@ pub(crate) enum AddHyperedgeMembersError {
 
 /// Errors returned by [`crate::Graph::remove_hyperedge_members`].
 #[derive(Debug)]
-pub(crate) enum RemoveHyperedgeMembersError {
+pub enum RemoveHyperedgeMembersError {
     /// The hyperedge id doesn't exist.
     HyperedgeNotFound(HyperedgeNotFoundError),
     /// Some passed pointees aren't current members.
@@ -190,7 +190,7 @@ pub(crate) enum RemoveHyperedgeMembersError {
 /// Errors returned while applying a single [`ObjectPatch`] to an
 /// `Object`.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ObjectPatchError {
+pub enum ObjectPatchError {
     /// `AddField` on a name that already exists.
     FieldAlreadyExists { field_name: String },
     /// `RemoveField` / `ArrayPatch` / `SubObjectPatch` referenced a
@@ -206,7 +206,7 @@ pub(crate) enum ObjectPatchError {
 
 /// Errors returned by [`crate::Graph::apply_object_delta`].
 #[derive(Debug)]
-pub(crate) enum DeltaError {
+pub enum DeltaError {
     /// The id has no `Object` to patch (could be unknown, or an
     /// edge/hyperedge with no attached object).
     NotFound(EntityNotFoundError),
@@ -217,7 +217,7 @@ pub(crate) enum DeltaError {
 /// Errors returned by [`crate::Graph::apply_patch`] — wraps the
 /// failure of whichever silent op the offending [`Patch`] mapped to.
 #[derive(Debug)]
-pub(crate) enum ApplyPatchError {
+pub enum ApplyPatchError {
     NodeAlreadyExists(NodeAlreadyExistsError),
     AddEdge(AddEdgeError),
     CreateHyperEdge(CreateHyperedgeError),
@@ -313,7 +313,7 @@ impl From<AttachObjectError> for ApplyPatchError {
 /// event log no longer matches the graph; the graph may be left
 /// partially reverted.
 #[derive(Debug)]
-pub(crate) enum UndoError {
+pub enum UndoError {
     /// A silent op failed while reverting a patch.
     Apply(ApplyPatchError),
     /// These cascade patches could not be reverted because their

@@ -65,7 +65,7 @@ pub(crate) use queries::AttachKind;
 pub(crate) type ListenerId = Uuid;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub(crate) struct Modification {
+pub struct Modification {
     /// Everything the cascade of this mutation removed — whole
     /// edges/hyperedges and members stripped from surviving
     /// hyperedges — in the order it happened (after `operation`).
@@ -76,7 +76,7 @@ pub(crate) struct Modification {
 }
 
 #[derive(Default)]
-pub(crate) struct Graph {
+pub struct Graph {
     /// Object attached to each id — nodes always, edges/hyperedges
     /// only when [`Graph::attach_obj`] has been called on them.
     pub(crate) entities: HashMap<EntityId, Object>,

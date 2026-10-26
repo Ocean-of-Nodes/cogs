@@ -7,7 +7,7 @@ For example we have module `hellow-view` that's we wont load to DB then we need 
 provide an ABI for the execution engine. `dialect` represented by two crates: `sdk` and `sdk-macros`.
 
 Next we have the `common` crate, it contains some common types such as objects and identifiers.
-It shared multiple time along all side's that need it: `sdk`, `sdk-macros`, `db`, `jit`, `storage`, `delta`.
+It shared multiple time along all side's that need it: `sdk`, `sdk-macros`, `db`, `jit`, `delta`.
 
 
 
@@ -55,47 +55,27 @@ It shared multiple time along all side's that need it: `sdk`, `sdk-macros`, `db`
                   │  ┌─────────────────┐    ┌─────────────────────────┐      │
                   │  │   wasmtime      │ ◀▶ │  host-fn registry       │      │
                   │  │   (engine, run) │    │   __cog_add_node        │      │
-                  │  └─────────────────┘    │   __cog_add_edge_safe   │      │
-                  │                         │   __cog_add_edge_raw  ◀─┼───┐  │
-                  │  ┌─────────────────┐    │   __cog_iter_edges      │   │  │
-                  │  │  wasmparser     │    │   ...                   │   │  │
-                  │  │  static analysis│ ─▶ │  decides which version  │   │  │
-                  │  │  (pattern det.) │    │   to bind per module    │   │  │
-                  │  └─────────────────┘    └─────────────┬───────────┘   │  │
-                  │                                       │ calls         │  │
-                  └───────────────────────────────────────┼───────────────┼──┘
-                                                          │               │
-                                            checked path  │   raw path    │
-                                                          ▼               │
-                                              ┌─────────────────┐         │
-                                              │  db             │         │
-                                              │                 │         │
-                                              │ • semantic API  │         │
-                                              │ • inv: endpts   │         │
-                                              │ • cascade del   │         │
-                                              │ • view registry │         │
-                                              │ • trackers ──▶  │         │
-                                              │   emits Patch   │         │
-                                              └────────┬────────┘         │
-                                                       │ raw ops          │
-                                                       ▼                  │
-                                              ┌─────────────────┐         │
-                                              │  storage        │ ◀───────┘
-                                              │                 │  (JIT may
-                                              │ • put/get/del   │   bypass db
-                                              │ • by-endpoint   │   when safe)
-                                              │   index         │
-                                              │ • by-member     │
-                                              │   index         │
-                                              │ • NO checks     │
-                                              │ • NO cascade    │
-                                              │ • NO trackers   │
-                                              └─────────────────┘
-                                                       ▲
-                                                       │ materializes
-                                                       │ view results
-                                                       │ as ordinary records
-
+                  │  └─────────────────┘    │   __cog_add_edge        │      │
+                  │                         │   __cog_iter_edges      │      │
+                  │                         │   ...                   │      │
+                  │                         └─────────────┬───────────┘      │
+                  │                                       │ calls            │
+                  └───────────────────────────────────────┼──────────────────┘
+                                                          │
+                                                          ▼
+                                              ┌─────────────────────┐
+                                              │  db                 │
+                                              │                     │
+                                              │ • Graph: semantic   │
+                                              │   API + storage     │
+                                              │ • inv: endpts       │
+                                              │ • cascade del       │
+                                              │ • reverse index     │
+                                              │   (pointee uses)    │
+                                              │ • view registry     │
+                                              │ • trackers ──▶      │
+                                              │   emits Patch       │
+                                              └─────────────────────┘
 
            db emits Patch ───▶ ┌────────────┐ ───▶ ┌────────────┐ ───▶ ┌──────────┐
                                │  protocol  │      │ transports │      │  client  │

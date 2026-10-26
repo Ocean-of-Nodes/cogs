@@ -6,7 +6,7 @@ use common::*;
 /// A complete description of an edge — its id and both endpoints.
 /// Returned by [`crate::Graph::edge`] and [`crate::Graph::remove_edge`].
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct EdgeView {
+pub struct EdgeView {
     pub id: EdgeId,
     pub source: Pointee,
     pub target: Pointee,
@@ -15,7 +15,7 @@ pub(crate) struct EdgeView {
 /// Internal classification of an [`EntityId`] — what kind of entity
 /// it represents within the graph's storage model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EntityType {
+pub enum EntityType {
     Node,
     Edge,
     Hyperedge,

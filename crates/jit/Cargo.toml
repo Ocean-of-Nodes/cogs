@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 common = { path = "../common" }
-storage = { path = "../storage" }
+db = { path = "../db" }
 wasmtime = { version = "26", default-features = false, features = ["cranelift", "runtime"] }
 bincode = "1"
 anyhow = "1"

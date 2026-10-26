@@ -15,17 +15,9 @@ mod graph;
 mod object_patch;
 mod types;
 
-// Re-exports for the test module — production code reaches into the
-// submodules directly (`use crate::errors::*` etc.).
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use errors::*;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use graph::Graph;
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) use types::{EntityType, PointeeKind, EdgeView};
+pub use errors::*;
+pub use graph::{Graph, Modification};
+pub use types::{EdgeView, EntityType, PointeeKind};
 
 #[cfg(test)]
 mod tests;
