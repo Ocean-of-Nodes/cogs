@@ -19,6 +19,7 @@
 //!   `*_hyperedge_members`.
 //! - `apply_delta.rs` — replay of a [`Delta`] of `ThinPatch`es.
 //! - `listeners.rs` — `record` + listener stubs.
+//! - `undo.rs` — [`Graph::undo`]: revert the last logged mutation.
 //!
 //! ## Invariants
 //!
@@ -54,6 +55,7 @@ mod index;
 mod listeners;
 mod modifiers;
 mod queries;
+mod undo;
 
 pub(crate) use index::PointeeUses;
 pub(crate) use queries::AttachKind;

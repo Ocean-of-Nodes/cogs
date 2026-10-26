@@ -308,3 +308,21 @@ impl From<AttachObjectError> for ApplyPatchError {
         Self::Attach(e)
     }
 }
+
+/// Errors returned by [`crate::Graph::undo`]. Either one means the
+/// event log no longer matches the graph; the graph may be left
+/// partially reverted.
+#[derive(Debug)]
+pub(crate) enum UndoError {
+    /// A silent op failed while reverting a patch.
+    Apply(ApplyPatchError),
+    /// These cascade patches could not be reverted because their
+    /// dependencies never came back.
+    UnresolvedCascade(FullDelta),
+}
+
+impl From<ApplyPatchError> for UndoError {
+    fn from(e: ApplyPatchError) -> Self {
+        Self::Apply(e)
+    }
+}
