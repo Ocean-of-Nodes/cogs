@@ -50,7 +50,7 @@ fn removes_edge_attached() {
 
     assert!(g.edges.contains_key(&e));
     assert!(!g.entities.contains_key(&e));
-    assert_eq!(*g.events.last().unwrap(), Patch::RemoveEdgeData { id: e });
+    assert_eq!(ThinPatch::from(&g.events.last().unwrap().operation), ThinPatch::RemoveEdgeData { id: e });
     test_utils::check_index_invariant(&g);
 }
 
@@ -72,8 +72,8 @@ fn removes_hyperedge_attached() {
     assert!(g.hyperedges.contains_key(&h));
     assert!(!g.entities.contains_key(&h));
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::RemoveHyperedgeData { id: h }
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::RemoveHyperedgeData { id: h }
     );
     test_utils::check_index_invariant(&g);
 }
@@ -144,10 +144,11 @@ fn records_single_patch_on_cascade() {
     let count = g
         .events
         .iter()
+        .map(|m| ThinPatch::from(&m.operation))
         .filter(|p| {
             matches!(
                 p,
-                Patch::RemoveEdgeData { .. } | Patch::RemoveHyperedgeData { .. }
+                ThinPatch::RemoveEdgeData { .. } | ThinPatch::RemoveHyperedgeData { .. }
             )
         })
         .count();

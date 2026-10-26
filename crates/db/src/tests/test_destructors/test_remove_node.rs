@@ -177,7 +177,7 @@ fn rejects_attached_object_id() {
     test_utils::check_index_invariant(&g);
 }
 
-/// Records exactly one `Patch::RemoveNode` even on a cascade.
+/// Records exactly one `ThinPatch::RemoveNode` even on a cascade.
 #[test]
 fn records_single_patch_on_cascade() {
     let mut g = Graph::default();
@@ -188,12 +188,13 @@ fn records_single_patch_on_cascade() {
 
     g.remove_node(&n1).unwrap();
 
-    let last = g.events.last().unwrap();
-    assert_eq!(*last, Patch::RemoveNode { id: n1 });
+    let last = &ThinPatch::from(&g.events.last().unwrap().operation);
+    assert_eq!(*last, ThinPatch::RemoveNode { id: n1 });
     let remove_count = g
         .events
         .iter()
-        .filter(|p| matches!(p, Patch::RemoveNode { .. }))
+        .map(|m| ThinPatch::from(&m.operation))
+        .filter(|p| matches!(p, ThinPatch::RemoveNode { .. }))
         .count();
     assert_eq!(remove_count, 1);
 }

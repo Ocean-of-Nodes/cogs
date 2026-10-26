@@ -54,14 +54,14 @@ impl Graph {
 
     /// Create a hyperedge containing the given non-empty set of
     /// existing pointees. Generates a new id and records
-    /// [`Patch::CreateHyperedge`].
+    /// [`FullPatch::CreateHyperedge`].
     pub fn create_hyperedge(
         &mut self,
         members: HashSet<Pointee>,
     ) -> Result<HyperedgeId, CreateHyperedgeError> {
         let id = Uuid::new_v4();
         self.silent_create_hyperedge_with_id(&id, members.clone())?;
-        self.record_patch(Patch::CreateHyperedge { id, members });
+        self.record(FullPatch::CreateHyperedge { id, members }, FullDelta::new());
         Ok(id)
     }
 
@@ -79,11 +79,11 @@ impl Graph {
     }
 
     /// Add a fresh node carrying `obj`. Generates a new id and
-    /// records [`Patch::AddNode`] in the patch log.
+    /// records [`FullPatch::AddNode`] in the patch log.
     pub fn add_node(&mut self, obj: Object) -> NodeId {
         let id = Uuid::new_v4();
         let _ = self.silent_add_node_with_id(id, obj.clone());
-        self.record_patch(Patch::AddNode { id, obj });
+        self.record(FullPatch::AddNode { id, obj }, FullDelta::new());
         id
     }
 
@@ -135,7 +135,7 @@ impl Graph {
 
     /// Add an edge from `source` to `target`. Both endpoints must
     /// resolve via [`Graph::is_pointee_exist`] at insertion time.
-    /// Generates a new id and records [`Patch::AddEdge`].
+    /// Generates a new id and records [`FullPatch::AddEdge`].
     pub fn add_edge(
         &mut self,
         source: impl Into<Pointee>,
@@ -145,11 +145,14 @@ impl Graph {
         let target_pointee = target.into();
         let edge_id = Uuid::new_v4();
         self.silent_add_edge_with_id(edge_id, source_pointee.clone(), target_pointee.clone())?;
-        self.record_patch(Patch::AddEdge {
-            id: edge_id,
-            source: source_pointee,
-            target: target_pointee,
-        });
+        self.record(
+            FullPatch::AddEdge {
+                id: edge_id,
+                source: source_pointee,
+                target: target_pointee,
+            },
+            FullDelta::new(),
+        );
         Ok(edge_id)
     }
 }

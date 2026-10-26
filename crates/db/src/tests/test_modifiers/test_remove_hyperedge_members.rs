@@ -61,8 +61,8 @@ fn removes_subset_and_records_patch() {
     assert_eq!(g.hyperedge_members(&h), Some(&expected));
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::RemoveHyperedgeMembers {
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::RemoveHyperedgeMembers {
             id: h,
             members: to_remove,
         }

@@ -52,7 +52,7 @@ impl Graph {
     /// Attach an `Object` payload on top of an edge or hyperedge.
     /// Strict — fails with `IncorrectType` if the target already has
     /// an attached object (use `replace_attached_obj` for that).
-    /// Records [`Patch::UpsertEdgeData`] or [`Patch::UpsertHyperedgeData`].
+    /// Records [`FullPatch::UpsertEdgeData`] or [`FullPatch::UpsertHyperedgeData`].
     pub fn attach_obj(
         &mut self,
         target: AttachTargetId,
@@ -65,11 +65,26 @@ impl Graph {
 
         self.silent_attach_obj(target, obj.clone())?;
 
+        // Strict attach: there was no attached object before.
         if is_hyper {
-            self.record_patch(Patch::UpsertHyperedgeData { id: target, obj });
+            self.record(
+                FullPatch::UpsertHyperedgeData {
+                    id: target,
+                    obj,
+                    old: None,
+                },
+                FullDelta::new(),
+            );
         } else {
             // MetaEdge is structurally an edge, so it lives in `self.edges`.
-            self.record_patch(Patch::UpsertEdgeData { id: target, obj });
+            self.record(
+                FullPatch::UpsertEdgeData {
+                    id: target,
+                    obj,
+                    old: None,
+                },
+                FullDelta::new(),
+            );
         }
         Ok(())
     }
@@ -129,15 +144,17 @@ impl Graph {
         m: HashSet<Pointee>,
     ) -> Result<(), AddHyperedgeMembersError> {
         self.silent_add_hyperedge_members(id, m.clone())?;
-        self.record_patch(Patch::AddHyperedgeMembers { id, members: m });
+        self.record(FullPatch::AddHyperedgeMembers { id, members: m }, FullDelta::new());
         Ok(())
     }
 
+    /// Returns what the cascade removed (the hyperedge itself, if
+    /// it became empty, and everything that referenced it).
     pub(crate) fn silent_remove_hyperedge_members(
         &mut self,
         id: HyperedgeId,
         m: HashSet<Pointee>,
-    ) -> Result<(), RemoveHyperedgeMembersError> {
+    ) -> Result<FullDelta, RemoveHyperedgeMembersError> {
         let Some(current) = self.hyperedges.get(&id) else {
             return Err(RemoveHyperedgeMembersError::HyperedgeNotFound(
                 HyperedgeNotFoundError { id },
@@ -176,13 +193,19 @@ impl Graph {
 
         // Invariant: hyperedges are never empty. If membership went to
         // zero, kill the hyperedge and cascade.
+        let mut cascade = FullDelta::new();
         if now_empty {
             self.hyperedges.remove(&id);
-            self.entities.remove(&id);
-            self.cascade_remove_entity(id);
+            let data = self.entities.remove(&id);
+            cascade.push(FullPatch::RemoveHyperedge {
+                id,
+                members: HashSet::new(),
+                data,
+            });
+            cascade.extend(self.cascade_remove_entity(id));
         }
 
-        Ok(())
+        Ok(cascade)
     }
 
     pub fn remove_hyperedge_members(
@@ -190,8 +213,8 @@ impl Graph {
         id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), RemoveHyperedgeMembersError> {
-        self.silent_remove_hyperedge_members(id, m.clone())?;
-        self.record_patch(Patch::RemoveHyperedgeMembers { id, members: m });
+        let cascade = self.silent_remove_hyperedge_members(id, m.clone())?;
+        self.record(FullPatch::RemoveHyperedgeMembers { id, members: m }, cascade);
         Ok(())
     }
 
@@ -199,7 +222,7 @@ impl Graph {
         &mut self,
         id: &NodeId,
         obj: Object,
-    ) -> Result<Object, NodeNotFoundError> {
+    ) -> Result<(Object, FullDelta), NodeNotFoundError> {
         if !self.is_node(id) {
             return Err(NodeNotFoundError { id: *id });
         }
@@ -210,8 +233,8 @@ impl Graph {
             .expect("is_node checked above");
         // Path-pointees through this node may no longer resolve
         // under the new object — cascade the dead ones.
-        self.invalidate_dead_paths_through(*id);
-        Ok(old)
+        let cascade = self.invalidate_dead_paths_through(*id);
+        Ok((old, cascade))
     }
 
     /// Replace the object on a node. Records either `ChangeNode` (with
@@ -224,14 +247,23 @@ impl Graph {
         obj: Object,
     ) -> Result<Field, NodeNotFoundError> {
         let new_field_count = obj.len();
-        let old = self.silent_replace_node(id, obj.clone())?;
+        let (old, cascade) = self.silent_replace_node(id, obj.clone())?;
 
         let delta = diff_object(&old, &obj);
-        if delta.len() <= new_field_count {
-            self.record_patch(Patch::ChangeNode { id: *id, delta });
+        let operation = if delta.len() <= new_field_count {
+            FullPatch::ChangeNode {
+                id: *id,
+                delta,
+                old: old.clone(),
+            }
         } else {
-            self.record_patch(Patch::UpsertNode { id: *id, obj });
-        }
+            FullPatch::UpsertNode {
+                id: *id,
+                obj,
+                old: old.clone(),
+            }
+        };
+        self.record(operation, cascade);
 
         Ok(Field::Object(old))
     }
@@ -243,7 +275,7 @@ impl Graph {
         &mut self,
         id: AttachTargetId,
         obj: Object,
-    ) -> Result<(), AttachObjectError> {
+    ) -> Result<FullDelta, AttachObjectError> {
         let ty = match self.get_type(id) {
             Some(t) => t,
             None => {
@@ -275,13 +307,13 @@ impl Graph {
         // Replace case: paths through this id may no longer resolve.
         // Initial-attach case: no paths existed yet (unattached id couldn't
         // produce a valid Pointee::Path at add time), so this is a no-op.
-        self.invalidate_dead_paths_through(id);
-        Ok(())
+        Ok(self.invalidate_dead_paths_through(id))
     }
 
     /// Unified set-or-remove of the attached object on an edge or
     /// hyperedge. `Some(obj)` replaces / sets the payload, `None`
-    /// removes it. Returns the previous attached object.
+    /// removes it. Returns the previous attached object and what the
+    /// cascade removed.
     ///
     /// Note the asymmetric cascade:
     /// - `None` (remove) — every `Pointee::Path` through `id` becomes
@@ -294,35 +326,35 @@ impl Graph {
         &mut self,
         id: AttachTargetId,
         new: Option<Object>,
-    ) -> Result<Option<Object>, NoAttachedObjectError> {
+    ) -> Result<(Option<Object>, FullDelta), NoAttachedObjectError> {
         if !self.has_attached_object(&id) {
             return Err(NoAttachedObjectError { id });
         }
-        let old = match new {
+        let result = match new {
             Some(obj) => {
                 let prev = self.entities.insert(id, obj);
-                self.invalidate_dead_paths_through(id);
-                prev
+                (prev, self.invalidate_dead_paths_through(id))
             }
             None => {
                 let prev = self.entities.remove(&id);
-                self.invalidate_all_paths_through(id);
-                prev
+                (prev, self.invalidate_all_paths_through(id))
             }
         };
-        Ok(old)
+        Ok(result)
     }
 
     pub(crate) fn silent_replace_attached_obj(
         &mut self,
         id: &AttachTargetId,
         obj: Object,
-    ) -> Result<Object, NoAttachedObjectError> {
+    ) -> Result<(Object, FullDelta), NoAttachedObjectError> {
         // The unified op guarantees `Some(old)` because
         // `has_attached_object` was true at the start.
-        Ok(self
-            .silent_set_attached_obj(*id, Some(obj))?
-            .expect("has_attached_object guaranteed an old object"))
+        let (old, cascade) = self.silent_set_attached_obj(*id, Some(obj))?;
+        Ok((
+            old.expect("has_attached_object guaranteed an old object"),
+            cascade,
+        ))
     }
 
     /// Replace the attached object on an edge or hyperedge. Strict —
@@ -339,27 +371,37 @@ impl Graph {
         let new_field_count = obj.len();
         let kind = self.attach_kind(id);
 
-        let old = self.silent_replace_attached_obj(id, obj.clone())?;
+        let (old, cascade) = self.silent_replace_attached_obj(id, obj.clone())?;
         let delta = diff_object(&old, &obj);
         let use_change = delta.len() <= new_field_count;
+        let id = *id;
 
-        match (kind, use_change) {
-            (Some(AttachKind::Hyperedge), true) => {
-                self.record_patch(Patch::ChangeHyperedgeData { id: *id, delta })
-            }
-            (Some(AttachKind::Hyperedge), false) => {
-                self.record_patch(Patch::UpsertHyperedgeData { id: *id, obj })
-            }
-            (Some(AttachKind::Edge), true) => {
-                self.record_patch(Patch::ChangeEdgeData { id: *id, delta })
-            }
-            (Some(AttachKind::Edge), false) => {
-                self.record_patch(Patch::UpsertEdgeData { id: *id, obj })
-            }
+        let operation = match (kind, use_change) {
+            (Some(AttachKind::Hyperedge), true) => FullPatch::ChangeHyperedgeData {
+                id,
+                delta,
+                old: old.clone(),
+            },
+            (Some(AttachKind::Hyperedge), false) => FullPatch::UpsertHyperedgeData {
+                id,
+                obj,
+                old: Some(old.clone()),
+            },
+            (Some(AttachKind::Edge), true) => FullPatch::ChangeEdgeData {
+                id,
+                delta,
+                old: old.clone(),
+            },
+            (Some(AttachKind::Edge), false) => FullPatch::UpsertEdgeData {
+                id,
+                obj,
+                old: Some(old.clone()),
+            },
             // Unreachable — `silent_replace_attached_obj` would have
             // failed otherwise.
-            (None, _) => {}
-        }
+            (None, _) => return Ok(Field::Object(old)),
+        };
+        self.record(operation, cascade);
 
         Ok(Field::Object(old))
     }
@@ -368,7 +410,7 @@ impl Graph {
         &mut self,
         id: &Uuid,
         new_target: RetargetEdge,
-    ) -> Result<(), RetargetError> {
+    ) -> Result<Pointee, RetargetError> {
         let (old_source, old_target) = match self.edges.get(id) {
             Some((s, t)) => (s.clone(), t.clone()),
             None => return Err(RetargetError::EdgeNotFound(EdgeNotFoundError { id: *id })),
@@ -394,7 +436,7 @@ impl Graph {
 
         // No-op — same pointee.
         if old_endpoint == new_endpoint {
-            return Ok(());
+            return Ok(old_endpoint);
         }
 
         // Rewrite the edge.
@@ -427,21 +469,29 @@ impl Graph {
             bucket.edges_as_target.insert(*id);
         }
 
-        Ok(())
+        Ok(old_endpoint)
     }
 
     /// Retarget one endpoint of an existing edge. Records
-    /// [`Patch::RetargetEdge`].
+    /// [`FullPatch::RetargetEdge`].
     pub fn retarget_edge(
         &mut self,
         id: &Uuid,
         new_target: RetargetEdge,
     ) -> Result<(), RetargetError> {
-        self.silent_retarget_edge(id, new_target.clone())?;
-        self.record_patch(Patch::RetargetEdge {
-            id: *id,
-            new_target,
-        });
+        let old = self.silent_retarget_edge(id, new_target.clone())?;
+        let old_target = match new_target {
+            RetargetEdge::Source(_) => RetargetEdge::Source(old),
+            RetargetEdge::Target(_) => RetargetEdge::Target(old),
+        };
+        self.record(
+            FullPatch::RetargetEdge {
+                id: *id,
+                new_target,
+                old_target,
+            },
+            FullDelta::new(),
+        );
         Ok(())
     }
 }

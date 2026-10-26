@@ -1,4 +1,4 @@
-//! Patch-log replay: apply a recorded `Vec<Patch>` to a graph
+//! Patch-log replay: apply a recorded `Vec<ThinPatch>` to a graph
 //! and reconstruct an identical state.
 
 use uuid::Uuid;
@@ -18,59 +18,72 @@ impl Graph {
         &mut self,
         id: Uuid,
         patch: Vec<ObjectPatch>,
-    ) -> Result<(), DeltaError> {
+    ) -> Result<FullDelta, DeltaError> {
         let obj = self
             .entities
             .get_mut(&id)
             .ok_or(DeltaError::NotFound(EntityNotFoundError { id }))?;
         apply_object_patches(obj, patch).map_err(DeltaError::Delta)?;
-        self.invalidate_dead_paths_through(id);
-        Ok(())
+        Ok(self.invalidate_dead_paths_through(id))
     }
 
-    /// Apply a sequence of [`Patch`]es to this graph in order. Each
-    /// patch is dispatched to the matching `silent_*` op; any failure
-    /// is wrapped into [`ApplyPatchError`] via the `From` impls.
+    /// Apply a sequence of [`ThinPatch`]es to this graph in order.
+    /// Each patch is dispatched to the matching `silent_*` op; any
+    /// failure is wrapped into [`ApplyPatchError`] via the `From`
+    /// impls. The cascade is recomputed by the ops, so their returned
+    /// cascade deltas are dropped.
     pub(crate) fn apply_delta(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
         for patch in delta {
             match patch {
-                Patch::AddNode { id, obj } => self.silent_add_node_with_id(id, obj)?,
-                Patch::RemoveNode { id } => {
+                ThinPatch::AddNode { id, obj } => self.silent_add_node_with_id(id, obj)?,
+                ThinPatch::RemoveNode { id } => {
                     self.silent_remove_node(&id)?;
                 }
-                Patch::ChangeNode { id, delta } => self.apply_object_delta(id, delta)?,
-                Patch::UpsertNode { id, obj } => {
+                ThinPatch::ChangeNode { id, delta } => {
+                    self.apply_object_delta(id, delta)?;
+                }
+                ThinPatch::UpsertNode { id, obj } => {
                     self.silent_replace_node(&id, obj)?;
                 }
-                Patch::AddEdge { id, source, target } => {
+                ThinPatch::AddEdge { id, source, target } => {
                     self.silent_add_edge_with_id(id, source, target)?
                 }
-                Patch::RemoveEdge { id } => {
+                ThinPatch::RemoveEdge { id } => {
                     self.silent_remove_edge(&id)?;
                 }
-                Patch::RetargetEdge { id, new_target } => {
-                    self.silent_retarget_edge(&id, new_target)?
+                ThinPatch::RetargetEdge { id, new_target } => {
+                    self.silent_retarget_edge(&id, new_target)?;
                 }
-                Patch::UpsertEdgeData { id, obj } => self.silent_upsert_attached_obj(id, obj)?,
-                Patch::ChangeEdgeData { id, delta } => self.apply_object_delta(id, delta)?,
-                Patch::RemoveEdgeData { id } => self.silent_remove_attached(id)?,
-                Patch::CreateHyperedge { id, members } => {
+                ThinPatch::UpsertEdgeData { id, obj } => {
+                    self.silent_upsert_attached_obj(id, obj)?;
+                }
+                ThinPatch::ChangeEdgeData { id, delta } => {
+                    self.apply_object_delta(id, delta)?;
+                }
+                ThinPatch::RemoveEdgeData { id } => {
+                    self.silent_remove_attached(id)?;
+                }
+                ThinPatch::CreateHyperedge { id, members } => {
                     self.silent_create_hyperedge_with_id(&id, members)?
                 }
-                Patch::RemoveHyperedge { id } => {
+                ThinPatch::RemoveHyperedge { id } => {
                     self.silent_remove_hyperedge(&id)?;
                 }
-                Patch::AddHyperedgeMembers { id, members } => {
+                ThinPatch::AddHyperedgeMembers { id, members } => {
                     self.silent_add_hyperedge_members(id, members)?
                 }
-                Patch::RemoveHyperedgeMembers { id, members } => {
-                    self.silent_remove_hyperedge_members(id, members)?
+                ThinPatch::RemoveHyperedgeMembers { id, members } => {
+                    self.silent_remove_hyperedge_members(id, members)?;
                 }
-                Patch::UpsertHyperedgeData { id, obj } => {
-                    self.silent_upsert_attached_obj(id, obj)?
+                ThinPatch::UpsertHyperedgeData { id, obj } => {
+                    self.silent_upsert_attached_obj(id, obj)?;
                 }
-                Patch::ChangeHyperedgeData { id, delta } => self.apply_object_delta(id, delta)?,
-                Patch::RemoveHyperedgeData { id } => self.silent_remove_attached(id)?,
+                ThinPatch::ChangeHyperedgeData { id, delta } => {
+                    self.apply_object_delta(id, delta)?;
+                }
+                ThinPatch::RemoveHyperedgeData { id } => {
+                    self.silent_remove_attached(id)?;
+                }
             }
         }
 

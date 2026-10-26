@@ -170,8 +170,8 @@ fn records_patch() {
     g.retarget_edge(&e, RetargetEdge::Target(n3.into())).unwrap();
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::RetargetEdge {
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::RetargetEdge {
             id: e,
             new_target: RetargetEdge::Target(Pointee::EntityId(n3)),
         }

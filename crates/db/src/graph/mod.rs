@@ -17,8 +17,8 @@
 //! - `destructors.rs` — `remove_*` family.
 //! - `modifiers.rs` — `attach_obj`, `replace_*`, `retarget_edge`,
 //!   `*_hyperedge_members`.
-//! - `apply_patch.rs` — patch-log replay.
-//! - `listeners.rs` — `record_patch` + listener stubs.
+//! - `apply_delta.rs` — replay of a [`Delta`] of `ThinPatch`es.
+//! - `listeners.rs` — `record` + listener stubs.
 //!
 //! ## Invariants
 //!
@@ -35,10 +35,11 @@
 //!
 //! ## Replay
 //!
-//! Every public mutation appends a [`Patch`] to `events`. Replaying
-//! the recorded log via [`Graph::apply_patch`] on a fresh graph
-//! reconstructs an identical state (verified by round-trip tests in
-//! `mod test_apply_patch`).
+//! Every public mutation appends a [`Modification`] to `events`.
+//! Converting the recorded `operation`s to `ThinPatch` and replaying
+//! them via [`Graph::apply_delta`] on a fresh graph reconstructs an
+//! identical state — the cascade is recomputed, so `cascade` is not
+//! replayed (verified by round-trip tests in `mod test_apply_delta`).
 
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -60,6 +61,17 @@ pub(crate) use queries::AttachKind;
 /// Identifier returned by [`Graph::subscribe_on_change`] and used to
 /// remove the listener via [`Graph::unsubscribe_on_change`].
 pub(crate) type ListenerId = Uuid;
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub(crate) struct Modification {
+    /// Everything the cascade of this mutation removed — whole
+    /// edges/hyperedges and members stripped from surviving
+    /// hyperedges — in the order it happened (after `operation`).
+    pub cascade: FullDelta,
+
+    /// Main patch for this mutation.
+    pub operation: FullPatch,
+}
 
 #[derive(Default)]
 pub(crate) struct Graph {
@@ -84,5 +96,5 @@ pub(crate) struct Graph {
     pub(crate) entity_to_path_pointees: HashMap<EntityId, HashSet<Pointee>>,
 
     /// Patch log — appended on every public mutation.
-    pub(crate) events: Delta,
+    pub(crate) events: Vec<Modification>,
 }

@@ -97,8 +97,8 @@ fn edge_small_delta_emits_change() {
     )
     .unwrap();
 
-    match g.events.last().unwrap() {
-        Patch::ChangeEdgeData { id, delta } => {
+    match &ThinPatch::from(&g.events.last().unwrap().operation) {
+        ThinPatch::ChangeEdgeData { id, delta } => {
             assert_eq!(*id, e);
             assert_eq!(delta.len(), 1);
         }
@@ -132,8 +132,8 @@ fn edge_large_delta_emits_upsert() {
     g.replace_attached_obj(&e, new.clone()).unwrap();
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::UpsertEdgeData { id: e, obj: new }
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::UpsertEdgeData { id: e, obj: new }
     );
 }
 
@@ -157,8 +157,8 @@ fn hyperedge_small_delta_emits_change() {
     )
     .unwrap();
 
-    match g.events.last().unwrap() {
-        Patch::ChangeHyperedgeData { id, delta } => {
+    match &ThinPatch::from(&g.events.last().unwrap().operation) {
+        ThinPatch::ChangeHyperedgeData { id, delta } => {
             assert_eq!(*id, h);
             assert_eq!(delta.len(), 1);
         }
@@ -192,8 +192,8 @@ fn hyperedge_large_delta_emits_upsert() {
     g.replace_attached_obj(&h, new.clone()).unwrap();
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::UpsertHyperedgeData { id: h, obj: new }
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::UpsertHyperedgeData { id: h, obj: new }
     );
 }
 

@@ -23,8 +23,9 @@ fn rejects_node() {
     let extra_events = g
         .events
         .iter()
+        .map(|m| ThinPatch::from(&m.operation))
         .filter(|p| {
-            matches!(p, Patch::UpsertEdgeData { .. } | Patch::UpsertHyperedgeData { .. })
+            matches!(p, ThinPatch::UpsertEdgeData { .. } | ThinPatch::UpsertHyperedgeData { .. })
         })
         .count();
     assert_eq!(extra_events, 0);
@@ -45,7 +46,8 @@ fn rejects_double_attach() {
     let count = g
         .events
         .iter()
-        .filter(|p| matches!(p, Patch::UpsertEdgeData { .. }))
+        .map(|m| ThinPatch::from(&m.operation))
+        .filter(|p| matches!(p, ThinPatch::UpsertEdgeData { .. }))
         .count();
     assert_eq!(count, 1, "second attach must NOT have recorded a patch");
 }
@@ -63,8 +65,8 @@ fn records_upsert_edge_data() {
     g.attach_obj(e, attached.clone()).unwrap();
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::UpsertEdgeData {
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::UpsertEdgeData {
             id: e,
             obj: attached,
         }
@@ -85,8 +87,8 @@ fn records_upsert_hyperedge_data() {
     g.attach_obj(h, attached.clone()).unwrap();
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::UpsertHyperedgeData {
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::UpsertHyperedgeData {
             id: h,
             obj: attached,
         }
@@ -110,8 +112,8 @@ fn meta_edge_records_upsert_edge_data() {
     g.attach_obj(meta, attached.clone()).unwrap();
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::UpsertEdgeData {
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::UpsertEdgeData {
             id: meta,
             obj: attached,
         }

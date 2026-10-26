@@ -76,8 +76,8 @@ fn adds_members_and_records_patch() {
     assert_eq!(g.hyperedge_members(&h), Some(&expected));
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::AddHyperedgeMembers {
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::AddHyperedgeMembers {
             id: h,
             members: to_add,
         }

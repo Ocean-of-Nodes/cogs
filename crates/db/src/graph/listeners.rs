@@ -3,17 +3,18 @@
 use common::*;
 
 use crate::graph::ListenerId;
-use crate::graph::Graph;
+use crate::graph::{Graph, Modification};
 
 impl Graph {
-    /// Append a patch to the graph's event log.
-    pub(crate) fn record_patch(&mut self, patch: Patch) {
-        self.events.push(patch);
+    /// Append a mutation to the graph's event log, together with
+    /// what its cascade removed.
+    pub(crate) fn record(&mut self, operation: FullPatch, cascade: FullDelta) {
+        self.events.push(Modification { cascade, operation });
     }
 
     /// Subscribe a listener that fires on every emitted patch.
     /// Stub — not yet implemented.
-    pub fn subscribe_on_change(&mut self, _listener: Box<dyn FnMut(Patch)>) -> ListenerId {
+    pub fn subscribe_on_change(&mut self, _listener: Box<dyn FnMut(FullPatch)>) -> ListenerId {
         todo!()
     }
 

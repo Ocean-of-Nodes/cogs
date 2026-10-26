@@ -61,8 +61,8 @@ fn small_delta_emits_change_node() {
     ]);
     g.replace_node(&n1, new).unwrap();
 
-    match g.events.last().unwrap() {
-        Patch::ChangeNode { id, delta } => {
+    match &ThinPatch::from(&g.events.last().unwrap().operation) {
+        ThinPatch::ChangeNode { id, delta } => {
             assert_eq!(*id, n1);
             assert_eq!(delta.len(), 1);
             assert!(matches!(
@@ -93,8 +93,8 @@ fn large_delta_emits_upsert_node() {
     g.replace_node(&n1, new.clone()).unwrap();
 
     assert_eq!(
-        *g.events.last().unwrap(),
-        Patch::UpsertNode { id: n1, obj: new }
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::UpsertNode { id: n1, obj: new }
     );
 }
 
@@ -115,8 +115,8 @@ fn equal_size_emits_change_node() {
     g.replace_node(&n1, new).unwrap();
 
     assert!(matches!(
-        g.events.last().unwrap(),
-        Patch::ChangeNode { .. }
+        ThinPatch::from(&g.events.last().unwrap().operation),
+        ThinPatch::ChangeNode { .. }
     ));
 }
 
@@ -129,8 +129,8 @@ fn identical_obj_emits_empty_change_node() {
 
     g.replace_node(&n1, obj).unwrap();
 
-    match g.events.last().unwrap() {
-        Patch::ChangeNode { id, delta } => {
+    match &ThinPatch::from(&g.events.last().unwrap().operation) {
+        ThinPatch::ChangeNode { id, delta } => {
             assert_eq!(*id, n1);
             assert!(delta.is_empty());
         }

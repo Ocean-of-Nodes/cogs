@@ -120,7 +120,7 @@ fn drops_attached_object() {
     test_utils::check_index_invariant(&g);
 }
 
-/// Records exactly one `Patch::RemoveHyperedge` even on a cascade.
+/// Records exactly one `ThinPatch::RemoveHyperedge` even on a cascade.
 #[test]
 fn records_single_patch_on_cascade() {
     let mut g = Graph::default();
@@ -135,12 +135,13 @@ fn records_single_patch_on_cascade() {
 
     g.remove_hyperedge(&h).unwrap();
 
-    let last = g.events.last().unwrap();
-    assert_eq!(*last, Patch::RemoveHyperedge { id: h });
+    let last = &ThinPatch::from(&g.events.last().unwrap().operation);
+    assert_eq!(*last, ThinPatch::RemoveHyperedge { id: h });
     let count = g
         .events
         .iter()
-        .filter(|p| matches!(p, Patch::RemoveHyperedge { .. }))
+        .map(|m| ThinPatch::from(&m.operation))
+        .filter(|p| matches!(p, ThinPatch::RemoveHyperedge { .. }))
         .count();
     assert_eq!(count, 1);
 }
