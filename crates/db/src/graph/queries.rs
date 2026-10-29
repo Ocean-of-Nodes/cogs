@@ -113,6 +113,43 @@ impl Graph {
         self.hyperedges.get(id)
     }
 
+    // ------------ NEIGHBOURHOOD ------------------- //
+
+    /// Edges whose source is `p`.
+    pub fn out_edges(&self, p: &Pointee) -> impl Iterator<Item = EdgeId> + '_ {
+        self.pointee_uses
+            .get(p)
+            .into_iter()
+            .flat_map(|uses| uses.edges_as_source.iter().copied())
+    }
+
+    /// Edges whose target is `p`.
+    pub fn in_edges(&self, p: &Pointee) -> impl Iterator<Item = EdgeId> + '_ {
+        self.pointee_uses
+            .get(p)
+            .into_iter()
+            .flat_map(|uses| uses.edges_as_target.iter().copied())
+    }
+
+    /// Hyperedges that have `p` as a member.
+    pub fn hyperedges_of(&self, p: &Pointee) -> impl Iterator<Item = HyperedgeId> + '_ {
+        self.pointee_uses
+            .get(p)
+            .into_iter()
+            .flat_map(|uses| uses.hyperedges.iter().copied())
+    }
+
+    /// Nodes whose object has top-level `field` equal to `value`.
+    /// Scans every node: there is no index by value yet.
+    pub fn nodes_where<'a>(
+        &'a self,
+        field: &'a str,
+        value: &'a Field,
+    ) -> impl Iterator<Item = NodeId> + 'a {
+        self.iter_nodes()
+            .filter(move |id| self.entities.get(id).and_then(|obj| obj.get(field)) == Some(value))
+    }
+
     // ------------ PREDICATES / CLASSIFICATION ------------------- //
 
     /// Classify `entity`. Returns `None` if the id isn't registered
@@ -136,12 +173,22 @@ impl Graph {
         let in_edges = self.edges.contains_key(&entity);
         let in_hyper = self.hyperedges.contains_key(&entity);
 
-        if !in_entities && !in_edges && !in_hyper {
-            return None;
-        }
-
         if in_entities && (in_edges || in_hyper) {
             return Some(EntityType::AttachedObject);
+        }
+
+        self.structural_type(entity)
+    }
+
+    /// [`Graph::get_type`] that ignores an attached object: an edge
+    /// or hyperedge is classified by its structure alone.
+    pub(crate) fn structural_type(&self, entity: EntityId) -> Option<EntityType> {
+        let in_entities = self.entities.contains_key(&entity);
+        let in_edges = self.edges.contains_key(&entity);
+        let in_hyper = self.hyperedges.contains_key(&entity);
+
+        if !in_entities && !in_edges && !in_hyper {
+            return None;
         }
 
         if in_edges {
@@ -177,13 +224,7 @@ impl Graph {
     ///   path resolves (see [`Graph::is_pointee_exist`]).
     pub fn classify_pointee(&self, p: &Pointee) -> Option<PointeeKind> {
         match p {
-            Pointee::EntityId(id) => self.get_type(*id).map(|t| match t {
-                EntityType::Node => PointeeKind::Node,
-                EntityType::Edge => PointeeKind::Edge,
-                EntityType::Hyperedge => PointeeKind::Hyperedge,
-                EntityType::MetaEdge => PointeeKind::MetaEdge,
-                EntityType::AttachedObject => PointeeKind::AttachedObject,
-            }),
+            Pointee::EntityId(id) => self.get_type(*id).map(PointeeKind::from),
             Pointee::Path(_) if self.is_pointee_exist(p) => Some(PointeeKind::Subobject),
             Pointee::Path(_) => None,
         }
@@ -200,7 +241,7 @@ impl Graph {
     /// segment by segment. Returns the field reached by the last
     /// segment, or `None` if any segment is missing or attempts to
     /// traverse a non-object field.
-    fn walk_path<'a>(obj: &'a Object, local: &LocalObjPath) -> Option<&'a Field> {
+    pub(crate) fn walk_path<'a>(obj: &'a Object, local: &LocalObjPath) -> Option<&'a Field> {
         let mut iter = local.iter();
         let first = iter.next()?;
         let mut current = obj.get(first)?;

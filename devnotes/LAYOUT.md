@@ -72,7 +72,9 @@ It shared multiple time along all side's that need it: `sdk`, `sdk-macros`, `db`
                                               │ • cascade del       │
                                               │ • reverse index     │
                                               │   (pointee uses)    │
-                                              │ • view registry     │
+                                              │ • Database: view    │
+                                              │   invocations, read │
+                                              │   sets, propagation │
                                               │ • trackers ──▶      │
                                               │   emits Patch       │
                                               └─────────────────────┘
@@ -81,3 +83,14 @@ It shared multiple time along all side's that need it: `sdk`, `sdk-macros`, `db`
                                │  protocol  │      │ transports │      │  client  │
                                └────────────┘      └────────────┘      └──────────┘
 ```
+
+## Views
+
+`db` owns the incremental part: `db::Database` keeps the graph, the
+registered views, the read set and outputs of every invocation, and
+decides which invocations are dirty. It does not run code. `jit::Host`
+loads WASM modules, registers their `__cog_view_*` exports with the
+database and runs whatever `Database::begin_next` hands out; graph
+intrinsics go through `db::ViewGraph`, which records reads and checks
+ownership. Native tests in `db` drive the same loop with Rust closures
+(`Database::propagate_with`).

@@ -16,7 +16,7 @@ use crate::EntityId;
 use crate::local_path::{LocalObjPath, PathError as LocalError};
 
 /// An owned `<uuid>/<seg₁>[/<seg₂>...]` path.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GlobalObjPath {
     entity: EntityId,
     /// Always non-root.

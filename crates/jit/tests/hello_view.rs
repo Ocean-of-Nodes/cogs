@@ -42,3 +42,17 @@ fn views_create_nodes_in_graph() {
         "view payloads mismatch"
     );
 }
+#[test]
+fn loading_a_module_twice_is_rejected() {
+    let wasm_bytes = std::fs::read(HELLO_WASM).expect("build examples/hello_view first");
+    let mut host = Runtime::new().host(Graph::default()).unwrap();
+    host.load(&wasm_bytes).unwrap();
+
+    let err = host.load(&wasm_bytes).unwrap_err();
+    assert!(err.to_string().contains("already registered"), "{err:#}");
+
+    // The host is still usable.
+    let report = host.propagate().unwrap();
+    assert_eq!(report.runs.len(), 2);
+    assert_eq!(host.graph().iter_nodes().count(), 2);
+}

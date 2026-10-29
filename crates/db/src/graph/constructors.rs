@@ -52,6 +52,18 @@ impl Graph {
         Ok(())
     }
 
+    /// [`Graph::create_hyperedge`] with a chosen id and without the
+    /// input-layer guard.
+    pub(crate) fn create_hyperedge_with_id(
+        &mut self,
+        id: HyperedgeId,
+        members: HashSet<Pointee>,
+    ) -> Result<(), CreateHyperedgeError> {
+        self.silent_create_hyperedge_with_id(&id, members.clone())?;
+        self.record(FullPatch::CreateHyperedge { id, members }, FullDelta::new());
+        Ok(())
+    }
+
     /// Create a hyperedge containing the given non-empty set of
     /// existing pointees. Generates a new id and records
     /// [`FullPatch::CreateHyperedge`].
@@ -59,9 +71,14 @@ impl Graph {
         &mut self,
         members: HashSet<Pointee>,
     ) -> Result<HyperedgeId, CreateHyperedgeError> {
+        let pointees = self.unwritable_pointees(&members);
+        if !pointees.is_empty() {
+            return Err(CreateHyperedgeError::PointeesNotFound(
+                PointeesNotFoundError { pointees },
+            ));
+        }
         let id = Uuid::new_v4();
-        self.silent_create_hyperedge_with_id(&id, members.clone())?;
-        self.record(FullPatch::CreateHyperedge { id, members }, FullDelta::new());
+        self.create_hyperedge_with_id(id, members)?;
         Ok(id)
     }
 
@@ -78,12 +95,22 @@ impl Graph {
         Ok(())
     }
 
+    /// [`Graph::add_node`] with a chosen id.
+    pub(crate) fn add_node_with_id(
+        &mut self,
+        id: NodeId,
+        obj: Object,
+    ) -> Result<(), NodeAlreadyExistsError> {
+        self.silent_add_node_with_id(id, obj.clone())?;
+        self.record(FullPatch::AddNode { id, obj }, FullDelta::new());
+        Ok(())
+    }
+
     /// Add a fresh node carrying `obj`. Generates a new id and
     /// records [`FullPatch::AddNode`] in the patch log.
     pub fn add_node(&mut self, obj: Object) -> NodeId {
         let id = Uuid::new_v4();
-        let _ = self.silent_add_node_with_id(id, obj.clone());
-        self.record(FullPatch::AddNode { id, obj }, FullDelta::new());
+        let _ = self.add_node_with_id(id, obj);
         id
     }
 
@@ -133,6 +160,19 @@ impl Graph {
         Ok(())
     }
 
+    /// [`Graph::add_edge`] with a chosen id and without the
+    /// input-layer guard.
+    pub(crate) fn add_edge_with_id(
+        &mut self,
+        id: EdgeId,
+        source: Pointee,
+        target: Pointee,
+    ) -> Result<(), AddEdgeError> {
+        self.silent_add_edge_with_id(id, source.clone(), target.clone())?;
+        self.record(FullPatch::AddEdge { id, source, target }, FullDelta::new());
+        Ok(())
+    }
+
     /// Add an edge from `source` to `target`. Both endpoints must
     /// resolve via [`Graph::is_pointee_exist`] at insertion time.
     /// Generates a new id and records [`FullPatch::AddEdge`].
@@ -143,16 +183,17 @@ impl Graph {
     ) -> Result<EdgeId, AddEdgeError> {
         let source_pointee = source.into();
         let target_pointee = target.into();
+        if !self.writable_pointee(&source_pointee) || !self.writable_pointee(&target_pointee) {
+            let missing_endpoints = [source_pointee, target_pointee]
+                .into_iter()
+                .filter(|p| !self.writable_pointee(p) || !self.is_pointee_exist(p))
+                .collect();
+            return Err(AddEdgeError::MissingEndpoints(MissingEndpointsError {
+                missing_endpoints,
+            }));
+        }
         let edge_id = Uuid::new_v4();
-        self.silent_add_edge_with_id(edge_id, source_pointee.clone(), target_pointee.clone())?;
-        self.record(
-            FullPatch::AddEdge {
-                id: edge_id,
-                source: source_pointee,
-                target: target_pointee,
-            },
-            FullDelta::new(),
-        );
+        self.add_edge_with_id(edge_id, source_pointee, target_pointee)?;
         Ok(edge_id)
     }
 }

@@ -35,6 +35,9 @@ impl Graph {
     /// one [`FullPatch::RemoveNode`] with the cascade attached.
     /// Returns the node's previous object.
     pub fn remove_node(&mut self, id: &NodeId) -> Result<Object, NodeNotFoundError> {
+        if !self.writable(id) {
+            return Err(NodeNotFoundError { id: *id });
+        }
         let (obj, cascade) = self.silent_remove_node(id)?;
         self.record(
             FullPatch::RemoveNode {
@@ -85,6 +88,9 @@ impl Graph {
     /// it. Records [`FullPatch::RemoveEdge`].
     /// Returns the [`EdgeView`] of the removed edge.
     pub fn remove_edge(&mut self, id: &EdgeId) -> Result<EdgeView, EdgeNotFoundError> {
+        if !self.writable(id) {
+            return Err(EdgeNotFoundError { id: *id });
+        }
         let (view, data, cascade) = self.silent_remove_edge(id)?;
         self.record(
             FullPatch::RemoveEdge {
@@ -139,6 +145,9 @@ impl Graph {
         &mut self,
         hid: &HyperedgeId,
     ) -> Result<HashSet<Pointee>, HyperedgeNotFoundError> {
+        if !self.writable(hid) {
+            return Err(HyperedgeNotFoundError { id: *hid });
+        }
         let (members, data, cascade) = self.silent_remove_hyperedge(hid)?;
         self.record(
             FullPatch::RemoveHyperedge {
@@ -173,6 +182,9 @@ impl Graph {
         &mut self,
         target: AttachTargetId,
     ) -> Result<(), NoAttachedObjectError> {
+        if !self.writable(&target) {
+            return Err(NoAttachedObjectError { id: target });
+        }
         // Resolve the kind *before* the silent op — the structure
         // stays alive after the call, but kind resolution is a
         // pre-condition for picking the patch variant.

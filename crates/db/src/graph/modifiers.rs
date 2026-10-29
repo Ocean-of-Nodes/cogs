@@ -58,6 +58,11 @@ impl Graph {
         target: AttachTargetId,
         obj: Object,
     ) -> Result<(), AttachObjectError> {
+        if !self.writable(&target) {
+            return Err(AttachObjectError::AttachTargetNotFound(
+                AttachTargetNotFoundError { id: target },
+            ));
+        }
         // Resolve target type *before* mutating so we can pick the
         // right patch variant. After silent_attach_obj succeeds, the
         // type is guaranteed to be one of the attach-target kinds.
@@ -143,6 +148,17 @@ impl Graph {
         id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), AddHyperedgeMembersError> {
+        if !self.writable(&id) {
+            return Err(AddHyperedgeMembersError::HyperedgeNotFound(
+                HyperedgeNotFoundError { id },
+            ));
+        }
+        let pointees = self.unwritable_pointees(&m);
+        if self.hyperedges.contains_key(&id) && !pointees.is_empty() {
+            return Err(AddHyperedgeMembersError::PointeesNotFound(
+                PointeesNotFoundError { pointees },
+            ));
+        }
         self.silent_add_hyperedge_members(id, m.clone())?;
         self.record(FullPatch::AddHyperedgeMembers { id, members: m }, FullDelta::new());
         Ok(())
@@ -213,6 +229,11 @@ impl Graph {
         id: HyperedgeId,
         m: HashSet<Pointee>,
     ) -> Result<(), RemoveHyperedgeMembersError> {
+        if !self.writable(&id) {
+            return Err(RemoveHyperedgeMembersError::HyperedgeNotFound(
+                HyperedgeNotFoundError { id },
+            ));
+        }
         let cascade = self.silent_remove_hyperedge_members(id, m.clone())?;
         self.record(FullPatch::RemoveHyperedgeMembers { id, members: m }, cascade);
         Ok(())
@@ -246,6 +267,9 @@ impl Graph {
         id: &NodeId,
         obj: Object,
     ) -> Result<Field, NodeNotFoundError> {
+        if !self.writable(id) {
+            return Err(NodeNotFoundError { id: *id });
+        }
         let new_field_count = obj.len();
         let (old, cascade) = self.silent_replace_node(id, obj.clone())?;
 
@@ -368,6 +392,9 @@ impl Graph {
         id: &AttachTargetId,
         obj: Object,
     ) -> Result<Field, NoAttachedObjectError> {
+        if !self.writable(id) {
+            return Err(NoAttachedObjectError { id: *id });
+        }
         let new_field_count = obj.len();
         let kind = self.attach_kind(id);
 
@@ -479,6 +506,18 @@ impl Graph {
         id: &Uuid,
         new_target: RetargetEdge,
     ) -> Result<(), RetargetError> {
+        if !self.writable(id) {
+            return Err(RetargetError::EdgeNotFound(EdgeNotFoundError { id: *id }));
+        }
+        let new_pointee = match &new_target {
+            RetargetEdge::Source(p) | RetargetEdge::Target(p) => p,
+        };
+        if self.edges.contains_key(id) && !self.writable_pointee(new_pointee) {
+            return Err(RetargetError::InvalidTarget(InvalidRetargetError {
+                edge_id: *id,
+                new_target,
+            }));
+        }
         let old = self.silent_retarget_edge(id, new_target.clone())?;
         let old_target = match new_target {
             RetargetEdge::Source(_) => RetargetEdge::Source(old),

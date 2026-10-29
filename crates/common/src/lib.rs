@@ -2,7 +2,9 @@ pub mod abi;
 pub mod global_path;
 pub mod local_path;
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
@@ -23,7 +25,7 @@ pub type EntityId = Uuid;
 
 /// What an edge endpoint or a `Field::Link` can point at — either
 /// a whole entity (by id) or a sub-object inside an entity (by path).
-#[derive(PartialEq, Eq, Debug, Clone, Hash, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Debug, Clone, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Pointee {
     EntityId(EntityId),
     Path(GlobalObjPath),
@@ -32,6 +34,16 @@ pub enum Pointee {
 impl From<EntityId> for Pointee {
     fn from(id: EntityId) -> Self {
         Pointee::EntityId(id)
+    }
+}
+
+impl Pointee {
+    /// The entity this pointee is, or lives inside of.
+    pub fn entity(&self) -> EntityId {
+        match self {
+            Pointee::EntityId(id) => *id,
+            Pointee::Path(path) => path.entity(),
+        }
     }
 }
 
@@ -64,6 +76,103 @@ pub enum Field {
     Link(Pointee),
     Null,
     // ------- END FUNDAMENTAL TYPES --------------
+}
+
+/// Consistent with `Eq`: an [`Object`] is hashed independently of
+/// its iteration order, so equal objects hash equally.
+impl Hash for Field {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Field::Array(items) => items.hash(state),
+            Field::Object(obj) => {
+                // Combine per-entry hashes with a commutative sum.
+                let sum = obj.iter().fold(0u64, |acc, entry| {
+                    let mut entry_hasher = DefaultHasher::new();
+                    entry.hash(&mut entry_hasher);
+                    acc.wrapping_add(entry_hasher.finish())
+                });
+                obj.len().hash(state);
+                sum.hash(state);
+            }
+            Field::String(s) => s.hash(state),
+            Field::Bool(b) => b.hash(state),
+            Field::Number(n) => n.hash(state),
+            Field::Link(p) => p.hash(state),
+            Field::Null => {}
+        }
+    }
+}
+
+impl From<&str> for Field {
+    fn from(s: &str) -> Self {
+        Field::String(s.to_string())
+    }
+}
+
+impl From<String> for Field {
+    fn from(s: String) -> Self {
+        Field::String(s)
+    }
+}
+
+impl From<bool> for Field {
+    fn from(b: bool) -> Self {
+        Field::Bool(b)
+    }
+}
+
+impl From<i32> for Field {
+    fn from(n: i32) -> Self {
+        Field::Number(n.into())
+    }
+}
+
+impl From<i64> for Field {
+    fn from(n: i64) -> Self {
+        Field::Number(n.into())
+    }
+}
+
+impl From<i128> for Field {
+    fn from(n: i128) -> Self {
+        Field::Number(n)
+    }
+}
+
+impl From<Pointee> for Field {
+    fn from(p: Pointee) -> Self {
+        Field::Link(p)
+    }
+}
+
+impl From<Object> for Field {
+    fn from(obj: Object) -> Self {
+        Field::Object(obj)
+    }
+}
+
+/// Which keys a view runs for: `#[view(for_each = ...)]`. The view
+/// gets one invocation per matching node, keyed by its id.
+#[derive(PartialEq, Eq, Debug, Clone, Hash, Serialize, Deserialize)]
+pub enum Pattern {
+    /// Every node.
+    Nodes,
+    /// Nodes whose object has top-level `field` equal to `value`.
+    NodesWhere { field: String, value: Field },
+}
+
+impl Pattern {
+    pub fn nodes() -> Self {
+        Pattern::Nodes
+    }
+
+    pub fn nodes_where(field: impl Into<String>, value: impl Into<Field>) -> Self {
+        Pattern::NodesWhere {
+            field: field.into(),
+            value: value.into(),
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize)]

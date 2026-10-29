@@ -13,13 +13,16 @@ use std::collections::HashSet;
 pub use common::abi::{
     AddEdgeError, AddHyperedgeMembersError, AttachObjectError, CreateHyperedgeError,
     EdgeNotFoundError, GetEdgeError, HyperedgeNotFoundError, NoAttachedObjectError,
-    NodeNotFoundError, RemoveHyperedgeMembersError, RetargetError, UndoError,
+    NodeNotFoundError, RemoveHyperedgeMembersError, RetargetError,
 };
 pub use common::{
-    AttachTargetId, EdgeId, EdgeView, EntityId, Field, FullDelta, FullPatch, HyperedgeId,
-    Modification, NodeId, Object, Pointee, PointeeKind, RetargetEdge,
+    AttachTargetId, EdgeId, EdgeView, EntityId, Field, HyperedgeId, NodeId, Object, Pattern,
+    Pointee, PointeeKind, RetargetEdge,
 };
 pub use sdk_macros::view;
+
+#[doc(hidden)]
+pub use common::abi::ViewMeta;
 
 use common::abi;
 use serde::{Serialize, de::DeserializeOwned};
@@ -58,7 +61,6 @@ unsafe extern "C" {
     fn __cog_replace_node(args_ptr: u32, args_len: u32) -> u64;
     fn __cog_replace_attached_obj(args_ptr: u32, args_len: u32) -> u64;
     fn __cog_retarget_edge(args_ptr: u32, args_len: u32) -> u64;
-    fn __cog_undo(args_ptr: u32, args_len: u32) -> u64;
 
     fn __cog_iter_entities(args_ptr: u32, args_len: u32) -> u64;
     fn __cog_iter_nodes(args_ptr: u32, args_len: u32) -> u64;
@@ -71,14 +73,32 @@ unsafe extern "C" {
     fn __cog_classify_pointee(args_ptr: u32, args_len: u32) -> u64;
     fn __cog_is_exist(args_ptr: u32, args_len: u32) -> u64;
     fn __cog_is_pointee_exist(args_ptr: u32, args_len: u32) -> u64;
+    fn __cog_field(args_ptr: u32, args_len: u32) -> u64;
+    fn __cog_out_edges(args_ptr: u32, args_len: u32) -> u64;
+    fn __cog_in_edges(args_ptr: u32, args_len: u32) -> u64;
+    fn __cog_hyperedges_of(args_ptr: u32, args_len: u32) -> u64;
+    fn __cog_nodes_where(args_ptr: u32, args_len: u32) -> u64;
 }
 
-/// Allocator the host calls to hand results back to the guest. The
-/// buffer is reclaimed in [`call`].
+/// Allocator the host calls to hand buffers to the guest: intrinsic
+/// results (reclaimed in [`call`]) and view keys (reclaimed in
+/// [`__args`]).
 #[unsafe(no_mangle)]
 pub extern "C" fn __cog_alloc(len: u32) -> u32 {
     let buf = vec![0u8; len as usize].into_boxed_slice();
     Box::into_raw(buf) as *mut u8 as u32
+}
+
+/// Release a buffer the guest handed to the host with [`__ret`].
+#[unsafe(no_mangle)]
+pub extern "C" fn __cog_free(ptr: u32, len: u32) {
+    drop(unsafe { take_buf(ptr, len) });
+}
+
+/// Take back ownership of a buffer made by `Box<[u8]>::into_raw`.
+unsafe fn take_buf(ptr: u32, len: u32) -> Box<[u8]> {
+    let slice = core::ptr::slice_from_raw_parts_mut(ptr as *mut u8, len as usize);
+    unsafe { Box::from_raw(slice) }
 }
 
 /// Encode `args`, invoke `intrinsic`, take ownership of the result
@@ -87,17 +107,39 @@ fn call<A: Serialize, R: DeserializeOwned>(intrinsic: Intrinsic, args: &A) -> R 
     let bytes = bincode::serialize(args).expect("encode intrinsic args");
     let packed = unsafe { intrinsic(bytes.as_ptr() as u32, bytes.len() as u32) };
     let (ptr, len) = abi::unpack_buf(packed);
-    let slice = core::ptr::slice_from_raw_parts_mut(ptr as *mut u8, len as usize);
-    let buf = unsafe { Box::from_raw(slice) };
+    let buf = unsafe { take_buf(ptr, len) };
     bincode::deserialize(&buf).expect("decode intrinsic result")
 }
 
-/// Handle to the graph backing the current invocation.
+/// Decode the arguments the host passed to a `#[view]` entry point.
+/// Used by macro-generated code.
+#[doc(hidden)]
+pub fn __args<T: DeserializeOwned>(ptr: u32, len: u32) -> T {
+    let buf = unsafe { take_buf(ptr, len) };
+    bincode::deserialize(&buf).expect("decode view arguments")
+}
+
+/// Hand `value` to the host as a packed buffer it releases with
+/// [`__cog_free`]. Used by macro-generated code.
+#[doc(hidden)]
+pub fn __ret<T: Serialize>(value: &T) -> u64 {
+    let bytes = bincode::serialize(value)
+        .expect("encode value for the host")
+        .into_boxed_slice();
+    let len = bytes.len() as u32;
+    abi::pack_buf(Box::into_raw(bytes) as *mut u8 as u32, len)
+}
+
+/// The graph as the running view invocation sees it.
 ///
-/// In the prototype this is a zero-sized marker — there is exactly
-/// one graph per invocation, hardcoded on the host side. Later it
-/// will carry an opaque host handle so the same module can address
-/// multiple graphs (captured spaces).
+/// - Every read is recorded: when what it returned may have changed,
+///   the invocation runs again.
+/// - The view owns what it creates. It can change or remove only
+///   entities it created in the current run; for anything else the
+///   methods fail as for a missing entity.
+/// - What the invocation wrote in its previous run is hidden until it
+///   writes it again, so a re-run sees what a first run would see.
+/// - Lists of ids are sorted.
 ///
 /// Methods mirror `db::Graph`; ids are taken by value and borrowed
 /// results are returned as owned copies.
@@ -212,11 +254,6 @@ impl Graph {
         call(__cog_retarget_edge, &(id, new_target))
     }
 
-    /// Revert the most recent mutation. `None` when the log is empty.
-    pub fn undo(&mut self) -> Result<Option<Modification>, UndoError> {
-        call(__cog_undo, &())
-    }
-
     // ------------ QUERIES ------------ //
 
     pub fn iter_entities(&self) -> Vec<EntityId> {
@@ -264,5 +301,33 @@ impl Graph {
 
     pub fn is_pointee_exist(&self, p: &Pointee) -> bool {
         call(__cog_is_pointee_exist, p)
+    }
+
+    /// One top-level field of the object at `id`. Depends on that
+    /// field only, so prefer it to [`Graph::obj`].
+    pub fn field(&self, id: EntityId, name: &str) -> Option<Field> {
+        call(__cog_field, &(id, name))
+    }
+
+    /// Edges whose source is `p`.
+    pub fn out_edges(&self, p: impl Into<Pointee>) -> Vec<EdgeId> {
+        call(__cog_out_edges, &p.into())
+    }
+
+    /// Edges whose target is `p`.
+    pub fn in_edges(&self, p: impl Into<Pointee>) -> Vec<EdgeId> {
+        call(__cog_in_edges, &p.into())
+    }
+
+    /// Hyperedges that have `p` as a member.
+    pub fn hyperedges_of(&self, p: impl Into<Pointee>) -> Vec<HyperedgeId> {
+        call(__cog_hyperedges_of, &p.into())
+    }
+
+    /// Nodes whose object has top-level `field` equal to `value`.
+    /// Depends on that pair, so a node that starts matching later
+    /// runs the view again even if nothing matched now.
+    pub fn nodes_where(&self, field: &str, value: impl Into<Field>) -> Vec<NodeId> {
+        call(__cog_nodes_where, &(field, value.into()))
     }
 }

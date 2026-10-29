@@ -40,6 +40,18 @@ impl EntityType {
     }
 }
 
+impl From<EntityType> for PointeeKind {
+    fn from(ty: EntityType) -> Self {
+        match ty {
+            EntityType::Node => PointeeKind::Node,
+            EntityType::Edge => PointeeKind::Edge,
+            EntityType::Hyperedge => PointeeKind::Hyperedge,
+            EntityType::MetaEdge => PointeeKind::MetaEdge,
+            EntityType::AttachedObject => PointeeKind::AttachedObject,
+        }
+    }
+}
+
 impl std::fmt::Display for EntityType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {

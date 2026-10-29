@@ -15,12 +15,45 @@
 //! - Fallible methods return `Result<T, E>` where `E` is one of the
 //!   error mirrors below. They only name the failure kind; the
 //!   detailed `db` error stays on the host.
+//!
+//! Views are exported by the guest:
+//!
+//! ```text
+//! fn __cog_view_<name>(args_ptr: u32, args_len: u32)
+//! fn __cog_meta_<name>() -> u64
+//! ```
+//!
+//! - The view entry takes the invocation key as a bincode
+//!   `Option<EntityId>` in a buffer the host obtained from
+//!   [`ALLOC_EXPORT`]; ownership of the buffer passes to the guest.
+//! - The meta export returns a [`pack_buf`]-ed bincode [`ViewMeta`]
+//!   in a guest buffer; the host releases it with [`FREE_EXPORT`].
 
 use serde::{Deserialize, Serialize};
+
+use crate::Pattern;
 
 /// Guest export `fn(len: u32) -> u32` that allocates `len` bytes
 /// and returns the pointer.
 pub const ALLOC_EXPORT: &str = "__cog_alloc";
+
+/// Guest export `fn(ptr: u32, len: u32)` that releases a buffer the
+/// guest handed to the host.
+pub const FREE_EXPORT: &str = "__cog_free";
+
+/// Prefix of view entry exports; the rest of the name is the view
+/// name.
+pub const VIEW_EXPORT_PREFIX: &str = "__cog_view_";
+
+/// Prefix of the export describing the view with the same name.
+pub const META_EXPORT_PREFIX: &str = "__cog_meta_";
+
+/// What a view declares about itself in `#[view(...)]`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewMeta {
+    /// Run once per matching node instead of once for the whole graph.
+    pub for_each: Option<Pattern>,
+}
 
 /// Pack a guest buffer `(ptr, len)` into one `u64` return value.
 pub fn pack_buf(ptr: u32, len: u32) -> u64 {
@@ -92,11 +125,4 @@ pub enum AddHyperedgeMembersError {
 pub enum RemoveHyperedgeMembersError {
     HyperedgeNotFound,
     MembersNotInHyperedge,
-}
-
-/// The event log no longer matches the graph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UndoError {
-    Apply,
-    UnresolvedCascade,
 }

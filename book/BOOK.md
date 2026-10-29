@@ -51,6 +51,20 @@ An *attached object* is an `Object` that piggy-backs on top of an edge or hypere
 - *Endpoints exist.* Every edge has both endpoints alive. Deleting an entity cascades to all edges that have it as source or target, and recursively to metaedges that depended on those edges.
 - *Hyperedge membership.* When a member of a hyperedge is deleted, it is removed from the hyperedge. A hyperedge that becomes empty is itself deleted (which in turn cascades to any edges that have it as source or target).
 
+## Input and derived facts
+
+Every entity belongs to one of two layers.
+
+- **Input facts** come from the outside world: clients, mutators, host code that calls `db::Graph` directly. In a compiler these are the parsed sources, in an IDE whatever the user typed.
+- **Derived facts** are written by [views](#view). Name-resolution edges, inferred types, diagnostics are derived facts. Every derived entity is *owned* by the view invocation that created it, and only that invocation may change or remove it.
+
+The layers are told apart by the ids themselves. Input ids are random (UUIDv4). Derived ids are computed from the owning invocation (UUIDv8, see [Stable ids](#stable-ids)).
+
+Two rules follow from the split:
+
+- **Inputs never depend on derived facts.** An input write cannot see derived entities: removing or changing one, or pointing an edge or hyperedge at one, fails with the same error as if the entity did not exist. Derived facts may point at inputs, never the other way round. Reads are not restricted.
+- **Derived facts are a cache.** They can always be thrown away and recomputed from the inputs. They are never undone and never need to be persisted.
+
 # Coding model
 
 ![Cog function](func.jpg)
@@ -63,55 +77,70 @@ Instead of creating a query language, COG's proposes a Rust dialect. When we say
 
 ### Kind of functions
 
-The database supports the following types of entities `mutator`, `view`, `procedure`. 
-- `mutator` provides data
-- `view` is a pure function that takes `space`'s and form new `space` as result
-- `procedure` is pure function that takes `object`'s and return anonymous `space`
+The database supports three kinds of functions: `mutator`, `view` and `procedure`.
+- `mutator` writes input facts.
+- `view` derives facts from what is already in the graph and writes them into the same graph. The database keeps them up to date when the graph changes.
+- `procedure` is a pure function that takes `object`s and returns an anonymous `space`.
 
 ### Mutator
 
-Something populates the database. Such functions are called `mutator`. 
+Something populates the database with input facts. Such functions are called `mutator`.
 
 ```rust
     #[mutator]
     fn 
 ```
 
-#### View
+**Not implemented yet.** For now inputs are written by the host through `db::Graph`.
 
-In traditional databases, views are created using schemas and modified by queries. COGs use functions to create views.
-Look at the example `hellow_view`
+### View
 
-```rust
-    #[view]
-    fn hellow_view(#[name = "graph1"] g1: Graph, #[name = "graph2"] g2: Graph) -> Graph {
-        ...
-    }
-```
-We see the `name` attribute with value. Each `view` function creates a hypergraph with an attach object with a field `name` which repeats the function name. That is, in this example `hellow_view`. 
-
-If you need to return multiple graphs, use a tuple with attributes.
+In traditional databases, views are created using schemas and modified by queries. COG uses functions instead. A view receives the graph as `&mut Graph`, reads whatever it needs and adds derived facts:
 
 ```rust
-    #[view]
-    fn hellow_view(#[name = "graph1"] g1: Graph, #[name = "graph2"] g2: Graph) -> (#[name = "graph3"] Graph, #[name = "graph4"] Graph) {
-        ...
-    }
+use sdk::{Field, Graph, Object, view};
+
+#[view]
+fn hello_view(g: &mut Graph) {
+    let mut obj = Object::new();
+    obj.insert("Hello".to_string(), Field::String("World".to_string()));
+    g.add_node(obj);
+}
 ```
 
-Or vector of `(String, Graph)`
+A view that takes only the graph runs once for the whole graph. Most views in a language tool are about one thing — one use site, one function, one expression — and should run once per such thing. That's what `for_each` is for:
 
 ```rust
-    #[view]
-    fn hellow_view(#[name = "graph1"] g1: Graph, #[name = "graph2"] g2: Graph) -> Vec<(String, Graph)> {
-        ...
+use sdk::{Field, Graph, NodeId, Pattern, view};
+
+/// Link every use site to the definitions with the same name.
+#[view(for_each = Pattern::nodes_where("kind", "use"))]
+fn resolve(g: &mut Graph, use_site: NodeId) {
+    let Some(name) = g.field(use_site, "name") else { return };
+    for def in g.nodes_where("name", name) {
+        if g.field(def, "kind") == Some(Field::from("def")) {
+            g.add_edge(use_site, def).unwrap();
+        }
     }
+}
 ```
 
+The database runs `resolve` once for every node whose `kind` field is `"use"` and passes that node as the key. One run of a view for one key is called an *invocation*. When a matching node appears, a new invocation is created. When the node disappears or stops matching, its invocation is dropped together with everything it wrote.
 
-A graph without a `name` attribute will pass the root graph (whole graph).
+| Pattern | Runs for |
+|---|---|
+| `Pattern::nodes()` | every node |
+| `Pattern::nodes_where(field, value)` | every node whose top-level `field` equals `value` |
 
-### Pocedure
+Inside a view `Graph` is not a plain handle to the database:
+
+- **Every read is recorded.** This is how the database knows when an invocation has to run again.
+- **Writes are owned.** An invocation can create nodes, edges and hyperedges and point them at anything it can see. It can change or remove only what it created itself during the current run. Everything else is reported as "not found".
+- **A view does not see its own previous results.** When an invocation runs again, what it wrote last time is hidden from it until it writes it again. A re-run sees exactly what a first run would see.
+
+The details are in [How COG does it](#how-cog-does-it).
+
+### Procedure
 
 Database can also contain `procedure`. The procedure takes N object as parameters and returns an anonymous graph, meaning it is not stored in the database, but is only transmitted to the client
 
@@ -122,6 +151,8 @@ Database can also contain `procedure`. The procedure takes N object as parameter
     }
 ```
 
+**Not implemented yet.**
+
 ## DB stored code
 
 ### For what?
@@ -130,11 +161,12 @@ The primary way to build COG applications is to place code within the database. 
 
 ### Your first module
 
-Ok, lets create new folder `hellow-view`.
+Ok, lets create new folder `hello_view`.
 
 Next, create `Cargo.toml` with following code:
 
 ```toml
+[package]
 name = "hello_view"
 version = "0.1.0"
 edition = "2024"
@@ -152,22 +184,45 @@ lto = true
 [workspace]
 ```
 
+And `.cargo/config.toml`, so that the module is built for WASM:
+
+```toml
+[build]
+target = "wasm32-unknown-unknown"
+```
+
 Ok, next create file `src/lib.rs` with following content:
 
 ```rust
-    use sdk::{Field, Graph, Object, view};
+use sdk::{Field, Graph, Object, view};
 
-    #[view]
-    fn hello_view(g: &mut Graph) {
-        let mut obj = Object::new();
-        obj.insert("Hello".to_string(), Field::String("World".to_string()));
-        g.add_node(obj);
-    }
+#[view]
+fn hello_view(g: &mut Graph) {
+    let mut obj = Object::new();
+    obj.insert("Hello".to_string(), Field::String("World".to_string()));
+    g.add_node(obj);
+}
 ```
 
-Ok, we just wrote function thats chang graph thats function call `mutator`.
+Ok, we just wrote our first view. It derives a single node, and the database will keep that node in place.
 
-Our code should work, but we haven't used this code yet. How can we verify that everything works? Well, we'll do that in the next section.
+### Running it
+
+`cargo build --release` produces `target/wasm32-unknown-unknown/release/hello_view.wasm`. The host loads it into a database and propagates:
+
+```rust
+use db::Graph;
+use jit::Runtime;
+
+let mut host = Runtime::new().host(Graph::default())?;
+host.load(&std::fs::read("hello_view.wasm")?)?;
+host.propagate()?;                  // runs every view once
+
+host.graph_mut().add_node(obj);     // change the inputs...
+host.propagate()?;                  // ...and re-run only what depends on the change
+```
+
+`propagate` returns a report: which invocations ran and which of them failed.
 
 # Client's
 
@@ -214,10 +269,111 @@ Real code is not just a chain of `let` bindings — it has control flow. How doe
 ```
     let total = items.iter().map(price).sum();
 ```
-and a single `item` is added, naive reactivity sees that `items` changed and reruns the entire loop, even though only one element is new. The DAG model has no way to express «the dependency on `items[3]` changed but `items[0..3]` and `items[4..]` did not». This is exactly the gap that **differential dataflow** fills: collection operators (`map`, `filter`, `join`, `reduce`) consume *diffs* (`+item`, `-item`) and produce diffs, so adding one element costs O(1) work, not O(n). In COG, scalar-typed view nodes use the Salsa-style trace described above; collection-typed view nodes (operating on `Space`/`Graph`) lower to differential operators instead.
+and a single `item` is added, naive reactivity sees that `items` changed and reruns the entire loop, even though only one element is new. The DAG model has no way to express «the dependency on `items[3]` changed but `items[0..3]` and `items[4..]` did not». This is exactly the gap that **differential dataflow** fills: collection operators (`map`, `filter`, `join`, `reduce`) consume *diffs* (`+item`, `-item`) and produce diffs, so adding one element costs O(1) work, not O(n).
 
-#### A note on the dependency graph itself
+COG takes a coarser but simpler route. `for_each` splits a view into one invocation per key, and the set of keys is maintained as a diff: a new key creates an invocation, a removed key drops one. Inside an invocation the Salsa-style trace is used. Adding one `item` costs one invocation, not a rerun of the whole loop.
 
-Independently of how the source code looks, the *graph of derived values* must stay acyclic — `a` cannot depend on `b` while `b` depends on `a`, because there is no fixed order in which to recompute them. Feedback between reactive values is expressed as an explicit time step (a new version of the graph), not as a cycle in the dependency graph.
+## How COG does it
 
+### Invocations
 
+An invocation is one view applied to one key, or to no key for a view without `for_each`. It is the unit of re-execution. For every invocation the database keeps:
+
+- its **read set** — the dependency keys recorded during its last run;
+- its **outputs** — the entities it owns.
+
+### Reads are tracked
+
+A view can look at the graph only through host intrinsics, so the database sees every read. Each read is recorded as a *dependency key*:
+
+| Read | Dependency key | Touched when |
+|---|---|---|
+| `is_exist(id)` | `Entity(id)` | the entity appears, disappears, gets or loses an attached object |
+| `classify_pointee(p)` | `Entity(id)`, `Edge(id)` | as above, or the edge's endpoints change |
+| `obj(id)` | `Obj(id)` | anything in the object changes |
+| `field(id, name)` | `Field(id, name)` | that one field changes |
+| `edge(id)` | `Entity(id)`, `Edge(id)` | the edge appears, disappears or is retargeted |
+| `hyperedge_members(id)` | `Members(id)` | the members change |
+| `out_edges(p)`, `in_edges(p)` | `OutEdges(p)`, `InEdges(p)` | an edge from / to `p` is added, removed or retargeted |
+| `hyperedges_of(p)` | `HyperedgesOf(p)` | `p` joins or leaves a hyperedge |
+| `nodes_where(field, value)` | `NodesWhere(field, value)` | a node gets or loses `field == value` |
+| `iter_nodes()`, `iter_edges()`, ... | `AllNodes`, `AllEdges`, ... | an entity of that kind is added or removed |
+
+A path pointee (`<id>/<field>/...`) depends on `Entity(id)` and on the first field of the path.
+
+Keys are recorded whatever the read returns. This matters for compilers. If `resolve` looked for definitions named `foo` and found none, it still depends on `NodesWhere("name", "foo")`, and adding a definition named `foo` re-runs it. A dependency on entities could not express "nothing was found".
+
+Writes depend on what they check: `add_edge(a, b)` depends on `a` and `b` existing, so an edge that could not be added is retried once its endpoint appears.
+
+Prefer narrow reads: `field` instead of `obj`, `nodes_where` and `out_edges` instead of iterating everything and filtering in the view. The narrower the key, the fewer re-runs.
+
+On the other side, every change of the graph — made by a mutator, a view, a cascade or an undo — is translated into the keys it touches. Every invocation whose read set contains one of them becomes dirty.
+
+### Writes are owned
+
+Inside a view:
+
+- `add_node`, `add_edge`, `create_hyperedge` create entities owned by the invocation. Edges and hyperedges may point at anything the invocation can see: inputs, outputs of other invocations, its own new entities.
+- `remove_*`, `replace_*`, `attach_obj`, `retarget_edge`, `*_hyperedge_members` work only on entities the invocation created in the current run. For anything else they fail the same way as for a missing entity.
+
+Ownership is what makes re-running safe: an invocation's outputs belong to it alone, so it can replace them without asking anybody.
+
+### Stable ids
+
+The ids a view gets from `add_node`, `add_edge` and `create_hyperedge` are not random. They are computed from the view name, the invocation key and:
+
+- for nodes and hyperedges, the number of the call in this run (the first node, the second node, ...);
+- for edges, the endpoints and the number of edges with the same endpoints added before in this run.
+
+Running an invocation twice over the same graph gives the same ids. That's what lets the database compare a re-run with the previous run instead of deleting and recreating everything. Edges get endpoint-based ids so that the typical "link this to that" output stays stable even when the view produces its edges in a different order.
+
+### Re-running: reconcile and early cutoff
+
+When a dirty invocation runs again:
+
+1. Its old read set is dropped. A new one is recorded during the run.
+2. Its outputs from the previous run are hidden from its own reads.
+3. Every write either creates a new entity or, if the id already exists from the previous run, reuses it. A reused node gets the new object only if the object differs. A reused hyperedge gets its members adjusted. A reused edge is kept, and its attached object is replaced only if it differs.
+4. When the run ends, whatever was not written again is removed.
+
+If the run produces exactly what it produced before, the graph does not change, no key is touched and nothing downstream runs. This is *early cutoff*: editing a comment re-runs the invocation that parses that file, the parser produces the same tree, and the propagation stops there.
+
+A run that fails (the view panics) keeps what it wrote before the failure and the dependencies it recorded, so it is retried when one of them changes. The failure is reported.
+
+### Propagation
+
+Inputs can be changed at any time. `propagate` brings derived facts up to date and repeats until nothing is dirty:
+
+1. Turn the changes made since the last step into touched keys. Mark the readers dirty. Refresh the key sets of `for_each` views whose pattern was touched, creating and dropping invocations.
+2. Take the next dirty invocation and run it. Its changes go through step 1, except that an invocation is never dirtied by its own writes.
+
+An invocation can run more than once in one propagation when it is reached through two paths. The result is the same as running every view from scratch over the current inputs.
+
+### Cycles
+
+Independently of how the source code looks, the *graph of derived values* must stay acyclic — `a` cannot depend on `b` while `b` depends on `a`, because there is no fixed order in which to recompute them.
+
+Every dirty invocation remembers which runs made it dirty. If the changes of an invocation come back, directly or through others, to an invocation that caused them, `propagate` stops with a cycle error naming the invocations involved. The same goes for a `for_each` view whose runs create or remove keys for the view itself.
+
+Feedback between reactive values is expressed as an explicit time step (a new version of the inputs), not as a cycle in the dependency graph.
+
+### Undo
+
+`undo` reverts the last *input* modification. Derived facts are not in the undo log. When an input comes back or goes away, the views that depend on it become dirty as after any other change, and the next `propagate` brings derived facts in line. Undo never restores a derived entity that a cascade removed — its owner creates it again.
+
+### Rules for view authors
+
+A view must be a function of what it reads:
+
+- no randomness, clocks or `static` state carried from one run to another;
+- don't rely on the iteration order of a `HashMap` or `HashSet`. Lists of ids returned by the graph are sorted;
+- don't read what you write. Reading your own writes within the same run is fine; reading what other invocations derive from your writes is a cycle.
+
+### Not yet
+
+- Physical indexes. `nodes_where` scans all nodes today; the dependency key makes it incremental, an index will make it fast.
+- More patterns for `for_each` (edges, hyperedges, subobjects) and keys other than node ids.
+- Explicit fixed points (stratified recursion) for things like glob imports and macro expansion.
+- Sending derived changes to clients.
+- Binding a view to named spaces instead of the whole graph.
+- Persisting the invocation table. Today a new database runs every view once.

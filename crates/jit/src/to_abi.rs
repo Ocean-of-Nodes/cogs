@@ -109,13 +109,3 @@ impl ToAbi for db::RemoveHyperedgeMembersError {
         }
     }
 }
-
-impl ToAbi for db::UndoError {
-    type Out = abi::UndoError;
-    fn to_abi(self) -> Self::Out {
-        match self {
-            Self::Apply(_) => abi::UndoError::Apply,
-            Self::UnresolvedCascade(_) => abi::UndoError::UnresolvedCascade,
-        }
-    }
-}

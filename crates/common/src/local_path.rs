@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// The only valid form is `/seg₁[/seg₂.../segₙ]` where every `segᵢ`
 /// is non-empty and contains no `/`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LocalObjPath {
     /// Always `/seg[/seg...]` — never empty, never `"/"`, never
     /// doubled slashes, never trailing slash.

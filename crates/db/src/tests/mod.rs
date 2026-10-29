@@ -24,3 +24,4 @@ mod patch_logging;
 mod test_apply_delta;
 mod test_apply_object_delta;
 mod test_undo;
+mod test_views;

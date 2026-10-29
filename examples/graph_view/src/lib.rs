@@ -1,15 +1,16 @@
 //! Exercises every `sdk::Graph` method across the guest ↔ host
 //! boundary. Each view checks its own area with `assert!`: a failed
 //! check traps, and the host reports which `__cog_view_*` trapped.
-//! Views only look at entities they created themselves, so they are
-//! independent of each other.
+//! Views only look at entities they created themselves, except
+//! `ownership_view`, which checks that another view's node can be
+//! pointed at but not changed.
 
 use std::collections::HashSet;
 
 use sdk::{
     AddEdgeError, AddHyperedgeMembersError, AttachObjectError, CreateHyperedgeError,
-    EdgeNotFoundError, EdgeView, EntityId, Field, FullPatch, GetEdgeError, Graph,
-    HyperedgeNotFoundError, NoAttachedObjectError, NodeNotFoundError, Object, Pointee, PointeeKind,
+    EdgeNotFoundError, EdgeView, EntityId, Field, GetEdgeError, Graph, HyperedgeNotFoundError,
+    NoAttachedObjectError, NodeNotFoundError, Object, Pointee, PointeeKind,
     RemoveHyperedgeMembersError, RetargetEdge, RetargetError, view,
 };
 
@@ -206,16 +207,41 @@ fn attached_view(g: &mut Graph) {
 }
 
 #[view]
-fn undo_view(g: &mut Graph) {
-    let n = g.add_node(named("n"));
-    let undone = g.undo().unwrap().expect("log has the add_node");
-    assert_eq!(
-        undone.operation,
-        FullPatch::AddNode {
-            id: n,
-            obj: named("n")
-        }
+fn neighbourhood_view(g: &mut Graph) {
+    let mut tagged = named("tagged");
+    tagged.insert(
+        "tag".to_string(),
+        Field::String("neighbourhood".to_string()),
     );
-    assert!(undone.cascade.is_empty());
-    assert!(!g.is_exist(n));
+    let a = g.add_node(tagged);
+    let b = g.add_node(named("b"));
+    let e = g.add_edge(a, b).unwrap();
+    let h = g.create_hyperedge(set(&[a])).unwrap();
+
+    assert_eq!(
+        g.field(a, "name"),
+        Some(Field::String("tagged".to_string()))
+    );
+    assert_eq!(g.field(a, "missing"), None);
+    assert_eq!(g.out_edges(a), vec![e]);
+    assert_eq!(g.in_edges(b), vec![e]);
+    assert_eq!(g.out_edges(b), Vec::<EntityId>::new());
+    assert_eq!(g.hyperedges_of(a), vec![h]);
+    assert_eq!(g.nodes_where("tag", "neighbourhood"), vec![a]);
+}
+
+/// Views own what they create, and nothing else.
+#[view]
+fn ownership_view(g: &mut Graph) {
+    // Until `neighbourhood_view` runs there is nothing to look at;
+    // its node re-runs this view.
+    let Some(&foreign) = g.nodes_where("name", "tagged").first() else {
+        return;
+    };
+    assert_eq!(g.remove_node(foreign), Err(NodeNotFoundError));
+    assert_eq!(g.replace_node(foreign, named("x")), Err(NodeNotFoundError));
+
+    // Pointing at someone else's entity is fine.
+    let own = g.add_node(named("own"));
+    g.add_edge(own, foreign).unwrap();
 }

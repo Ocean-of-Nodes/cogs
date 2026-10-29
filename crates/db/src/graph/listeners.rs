@@ -3,13 +3,23 @@
 use common::*;
 
 use crate::graph::ListenerId;
-use crate::graph::{Graph, Modification};
+use crate::graph::{Graph, Modification, Writer};
 
 impl Graph {
-    /// Append a mutation to the graph's event log, together with
-    /// what its cascade removed.
+    /// Note a mutation, together with what its cascade removed, in
+    /// the journal and — for input mutations — in the event log.
     pub(crate) fn record(&mut self, operation: FullPatch, cascade: FullDelta) {
-        self.events.push(Modification { cascade, operation });
+        self.journal_extend(std::iter::once(&operation).chain(&cascade));
+        if self.writer == Writer::Input {
+            self.events.push(Modification { cascade, operation });
+        }
+    }
+
+    /// Append `patches` to the journal, if there is one.
+    pub(crate) fn journal_extend<'a>(&mut self, patches: impl IntoIterator<Item = &'a FullPatch>) {
+        if let Some(journal) = &mut self.journal {
+            journal.extend(patches.into_iter().cloned());
+        }
     }
 
     /// Subscribe a listener that fires on every emitted patch.

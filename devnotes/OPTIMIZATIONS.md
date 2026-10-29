@@ -10,6 +10,12 @@ This note attempts to cover all significant optimizations made. So, yes, a bit o
 
 **Not currently implemented**
 
+### Index for `nodes_where`
+
+`Graph::nodes_where(field, value)` scans every node, and so does the key set of a `for_each` view. Views depend on the `(field, value)` pair, not on how it is looked up, so an index by value only changes the speed.
+
+**Not currently implemented**
+
 ## Code-aware
 
 **Not currently implemented**
