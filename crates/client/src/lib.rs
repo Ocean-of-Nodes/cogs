@@ -293,7 +293,23 @@ impl Client {
         &self,
         cold_graph: &ColdGraph,
     ) -> Result<(), ClientCallError> {
-        unimplemented!()
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        // Register first, send second — the reply can't race the registration.
+        self.pending_calls.lock().unwrap().insert(id, reply_tx);
+        self.tx
+            .send(OutFrame::ColdDropTracker {
+                tracker: cold_graph.id,
+            })
+            .await?;
+
+        match reply_rx.await? {
+            InFrame::ColdUnsubscribe { .. } => {},
+            _ => return Err(ClientCallError::UnexpectedFrame),
+        };
+
+        Ok(())
     }
 
     pub async fn materialized(&self, name: String) -> Result<MaterializedGraph, ClientCallError> {

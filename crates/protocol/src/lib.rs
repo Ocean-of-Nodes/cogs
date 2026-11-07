@@ -56,7 +56,8 @@ pub enum InFrame {
     
     ColdInitialReply { id: RequestId, tracker: TrackerId, delta: Delta },
     /// Sended when hyper edge not found
-    ColdError { id: SubId },
+    ColdError { id: RequestId },
+    ColdUnsubscribe { id: RequestId },
     ColdDelta { id: RequestId, delta: Delta }
 }
 
