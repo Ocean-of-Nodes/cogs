@@ -1,39 +1,167 @@
 mod errors;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use db::*;
 use errors::*;
 use protocol::*;
 
-#[derive(Default)]
+macro_rules! graph_forward_read_interface {
+    () => {
+        // ------------ ROOTS ------------------- //
+        pub fn iter_entities(&self) -> impl Iterator<Item = EntityId> {
+            self.graph.iter_entities()
+        }
+
+        pub fn iter_edges(&self) -> impl Iterator<Item = EdgeId> {
+            self.graph.iter_edges()
+        }
+
+        pub fn iter_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
+            self.graph.iter_nodes()
+        }
+
+        pub fn iter_hyperedges(&self) -> impl Iterator<Item = HyperedgeId> {
+            self.graph.iter_hyperedges()
+        }
+
+        pub fn iter_attached(&self) -> impl Iterator<Item = AttachTargetId> + '_ {
+            self.graph.iter_attached()
+        }
+
+        // ------------ GETTERS ------------------- //
+
+        pub fn obj(&self, id: &EntityId) -> Option<&Object> {
+            self.graph.obj(id)
+        }
+
+        pub fn edge(&self, id: &EdgeId) -> Result<EdgeView, GetEdgeError> {
+            self.graph.edge(id)
+        }
+
+        pub fn hyperedge_members(&self, id: &HyperedgeId) -> Option<&HashSet<Pointee>> {
+            self.graph.hyperedge_members(id)
+        }
+
+        // ------------ NEIGHBOURHOOD ------------------- //
+
+        pub fn out_edges(&self, p: &Pointee) -> impl Iterator<Item = EdgeId> + '_ {
+            self.graph.out_edges(p)
+        }
+
+        pub fn in_edges(&self, p: &Pointee) -> impl Iterator<Item = EdgeId> + '_ {
+            self.graph.in_edges(p)
+        }
+
+        pub fn hyperedges_of(&self, p: &Pointee) -> impl Iterator<Item = HyperedgeId> + '_ {
+            self.graph.hyperedges_of(p)
+        }
+
+        pub fn nodes_where<'a>(
+            &'a self,
+            field: &'a str,
+            value: &'a Field,
+        ) -> impl Iterator<Item = NodeId> + 'a {
+            self.graph.nodes_where(field, value)
+        }
+
+        // ------------ PREDICATES / CLASSIFICATION ------------------- //
+        pub fn classify_pointee(&self, p: &Pointee) -> Option<PointeeKind> {
+            self.graph.classify_pointee(p)
+        }
+
+        pub fn is_exist(&self, id: &EntityId) -> bool {
+            self.graph.is_exist(id)
+        }
+
+        pub fn is_pointee_exist(&self, p: &Pointee) -> bool {
+            self.graph.is_pointee_exist(p)
+        }
+    };
+}
+
 pub struct ImmutableGraph {
-    /// Hold graph object
-    entities: HashMap<EntityId, Object>,
-
-    /// Hold graph edges
-    edges: HashMap<EdgeId, (EntityId, EntityId)>,
-
-    /// Hold hyperedges
-    hyperedges: HashMap<HyperedgeId, Vec<EntityId>>,
-
-    /// Tracks external endpoints of a hyperedge
-    external: HashMap<HyperedgeId, Vec<EntityId>>, 
+    graph: Graph,
 }
 
 impl ImmutableGraph {
     pub fn new(snapshot: Delta) -> Self {
-        let mut g = Self::default();
-        g.apply_delta(snapshot);
-        g
+        let mut graph = Graph::default();
+        if let Err(err) = graph.apply_delta(snapshot) {
+            panic!("Failed to apply snapshot: {err:?}");
+        }
+        ImmutableGraph { graph }
     }
 
-    fn apply_delta(&mut self, snapshot: Delta) {
+    graph_forward_read_interface!();
+}
 
+pub struct ColdGraph {
+    id: TrackerId,
+    graph: Graph,
+}
+
+impl ColdGraph {
+    pub fn new(id: TrackerId, snapshot: Delta) -> Self {
+        let mut graph = Graph::default();
+        if let Err(err) = graph.apply_delta(snapshot) {
+            panic!("Failed to apply snapshot: {err:?}");
+        }
+        ColdGraph { id, graph }
     }
+
+    graph_forward_read_interface!();
+ 
+
+    fn apply_delta(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
+        self.graph.apply_delta(delta)
+    }
+}
+
+pub struct MaterializedGraph {
+    id: TrackerId,
+    graph: Graph,
+}
+
+impl MaterializedGraph {
+    // pub async fn new(
+    //     id: TrackerId,
+    //     snapshot: Delta,
+    //     mut puller: Receiver<Delta>,
+    // ) -> Self {
+    //     let mut graph = Graph::default();
+
+    //     graph.apply_delta(snapshot)
+    //         .expect("Failed to apply snapshot");
+
+    //     let graph = Arc::new(RwLock::new(graph));
+
+    //     let graph_clone = graph.clone();
+
+    //     std::thread::spawn(move || {
+    //         let runtime = tokio::runtime::Builder::new_current_thread()
+    //             .enable_all()
+    //             .build()
+    //             .expect("Failed to create runtime");
+
+    //         runtime.block_on(async move {
+    //             while let Some(delta) = puller.recv().await {
+    //                 let mut graph = graph_clone.write().await;
+
+    //                 graph.apply_delta(delta)
+    //                     .expect("Failed to apply delta");
+    //             }
+    //         });
+    //     });
+
+    //     MaterializedGraph { id, graph }
+    // }
+
+    graph_forward_read_interface!();
 }
 
 pub struct Client {
@@ -124,16 +252,64 @@ impl Client {
         Ok(ImmutableGraph::new(snapshot))
     }
 
-    pub fn cold_view(&self, _name: String, _args: Vec<HyperedgeId>) {
+    pub async fn cold_view(&self, name: String) -> Result<ColdGraph, ClientCallError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        // Register first, send second — the reply can't race the registration.
+        self.pending_calls.lock().unwrap().insert(id, reply_tx);
+        self.tx.send(OutFrame::Cold { id, name }).await?;
+
+        let response = match reply_rx.await? {
+            InFrame::ColdInitialReply { tracker, delta, .. } => (tracker, delta),
+            _ => return Err(ClientCallError::UnexpectedFrame),
+        };
+        Ok(ColdGraph::new(response.0, response.1))
+    }
+
+    pub async fn pull_off_patch(&self, graph: &mut ColdGraph) -> Result<(), ClientCallError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        // Register first, send second — the reply can't race the registration.
+        self.pending_calls.lock().unwrap().insert(id, reply_tx);
+        self.tx
+            .send(OutFrame::ColdRequestDelta {
+                id,
+                tracker: graph.id,
+            })
+            .await?;
+
+        let response = match reply_rx.await? {
+            InFrame::ColdDelta { delta, .. } => delta,
+            _ => return Err(ClientCallError::UnexpectedFrame),
+        };
+        // FIXME: the error is not handled
+        graph.apply_delta(response).unwrap();
+        Ok(())
+    }
+
+    pub async fn unsubscribe_cold_view(
+        &self,
+        cold_graph: &ColdGraph,
+    ) -> Result<(), ClientCallError> {
         unimplemented!()
     }
 
-    pub async fn materialized(&self, _name: String, _args: Vec<HyperedgeId>) {
+    pub async fn materialized(&self, name: String) -> Result<MaterializedGraph, ClientCallError> {
         unimplemented!()
     }
 
-    pub async fn query(&self, _query: &str) {
+    pub async fn unsubscribe_materialized(
+        &self,
+        graph: &mut MaterializedGraph,
+    ) -> Result<(), ClientCallError> {
         unimplemented!()
+    }
+
+    /// Run a query on the server and return the resulting graph.
+    pub async fn query(&self, _query: &str) -> Result<ImmutableGraph, ClientCallError> {
+        unimplemented!("the query dialect is not currently implemented")
     }
 }
 
@@ -162,27 +338,10 @@ mod tests {
             }
         });
 
-        let _ = client.call("ping".into(), vec![]).await;
+        let result = client.call("ping".into(), vec![]).await;
+        assert!(result.is_ok());
 
         drop(client);
         server_task.await.unwrap();
-    }
-
-    #[test]
-    #[ignore = "not implemented yet"]
-    fn test_cold() {
-        unimplemented!()
-    }
-
-    #[test]
-    #[ignore = "not implemented yet"]
-    fn test_materialized() {
-        unimplemented!()
-    }
-
-    #[test]
-    #[ignore = "not implemented yet"]
-    fn test_query() {
-        unimplemented!()
     }
 }

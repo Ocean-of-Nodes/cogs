@@ -32,7 +32,7 @@ impl Graph {
     /// failure is wrapped into [`ApplyPatchError`] via the `From`
     /// impls. The cascade is recomputed by the ops, so their returned
     /// cascade deltas are dropped.
-    pub(crate) fn apply_delta(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
+    pub fn apply_delta(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
         for patch in delta {
             match patch {
                 ThinPatch::AddNode { id, obj } => self.silent_add_node_with_id(id, obj)?,

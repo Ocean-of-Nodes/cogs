@@ -19,7 +19,7 @@ pub enum OutFrame {
     
     Subscribe {
         sub: SubId,
-        name: HyperedgeId,
+        name: String,
     },
     Unsubscribe {
         sub: SubId,
@@ -27,7 +27,7 @@ pub enum OutFrame {
     
     Cold {
         id: RequestId,
-        name: HyperedgeId,
+        name: String,
     },
     ColdRequestDelta {
         id: RequestId,

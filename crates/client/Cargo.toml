@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 protocol = { path = "../protocol" }
+db = { path = "../db" }
 tokio = { version = "1", features = ["macros", "rt", "sync"] }
 
 [dev-dependencies]
