@@ -3,7 +3,7 @@ mod errors;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use db::*;
@@ -115,7 +115,6 @@ impl ColdGraph {
     }
 
     graph_forward_read_interface!();
- 
 
     fn apply_delta(&mut self, delta: Delta) -> Result<(), ApplyPatchError> {
         self.graph.apply_delta(delta)
@@ -123,45 +122,47 @@ impl ColdGraph {
 }
 
 pub struct MaterializedGraph {
-    id: TrackerId,
-    graph: Graph,
+    id: SubId,
+    graph: Arc<RwLock<Graph>>,
+    updater: Option<JoinHandle<()>>,
 }
 
 impl MaterializedGraph {
-    // pub async fn new(
-    //     id: TrackerId,
-    //     snapshot: Delta,
-    //     mut puller: Receiver<Delta>,
-    // ) -> Self {
-    //     let mut graph = Graph::default();
+    pub fn new(
+        id: SubId,
+        mut puller: mpsc::Receiver<InFrame>,
+    ) -> Self {
+        let graph = Arc::new(RwLock::new(Graph::default()));
+        let graph_clone = Arc::clone(&graph);
 
-    //     graph.apply_delta(snapshot)
-    //         .expect("Failed to apply snapshot");
+        let updater = tokio::spawn(async move {
+            while let Some(frame) = puller.recv().await {
+                match frame {
+                    InFrame::SubscribeDelta { delta, .. } => {
+                        let mut graph = graph_clone.write().await;
 
-    //     let graph = Arc::new(RwLock::new(graph));
+                        if let Err(err) = graph.apply_delta(delta) {
+                            panic!("Failed to apply delta: {err:?}");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
 
-    //     let graph_clone = graph.clone();
+        Self {
+            id,
+            graph,
+            updater: Some(updater),
+        }
+    }
 
-    //     std::thread::spawn(move || {
-    //         let runtime = tokio::runtime::Builder::new_current_thread()
-    //             .enable_all()
-    //             .build()
-    //             .expect("Failed to create runtime");
-
-    //         runtime.block_on(async move {
-    //             while let Some(delta) = puller.recv().await {
-    //                 let mut graph = graph_clone.write().await;
-
-    //                 graph.apply_delta(delta)
-    //                     .expect("Failed to apply delta");
-    //             }
-    //         });
-    //     });
-
-    //     MaterializedGraph { id, graph }
-    // }
-
-    graph_forward_read_interface!();
+    async fn unsubscribe(&mut self) {
+        if let Some(updater) = self.updater.take() {
+            updater.abort();
+            let _ = updater.await;
+        }
+    }
 }
 
 pub struct Client {
@@ -305,7 +306,7 @@ impl Client {
             .await?;
 
         match reply_rx.await? {
-            InFrame::ColdUnsubscribe { .. } => {},
+            InFrame::ColdUnsubscribe { .. } => {}
             _ => return Err(ClientCallError::UnexpectedFrame),
         };
 
@@ -313,14 +314,32 @@ impl Client {
     }
 
     pub async fn materialized(&self, name: String) -> Result<MaterializedGraph, ClientCallError> {
-        unimplemented!()
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (out_tx, out_rx) = mpsc::channel(64);
+
+        self.subscriptions.lock().unwrap().insert(id, out_tx);
+        self.tx.send(OutFrame::Subscribe { sub: id, name }).await?;
+
+        Ok(MaterializedGraph::new(id, out_rx))
     }
 
     pub async fn unsubscribe_materialized(
         &self,
         graph: &mut MaterializedGraph,
     ) -> Result<(), ClientCallError> {
-        unimplemented!()
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        self.pending_calls.lock().unwrap().insert( graph.id, reply_tx);
+        self.tx
+            .send(OutFrame::Unsubscribe { sub: graph.id })
+            .await?;
+
+        match reply_rx.await? {
+            InFrame::Unsubscribe { .. } => {},
+            _ => return Err(ClientCallError::UnexpectedFrame),
+        };
+        graph.unsubscribe().await;
+        Ok(())
     }
 
     /// Run a query on the server and return the resulting graph.

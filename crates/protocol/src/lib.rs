@@ -53,7 +53,8 @@ pub enum InFrame {
     /// Sended when hyper edge not found
     SubscribeError { id: SubId },
     SubscribeDelta { id: SubId, delta: Delta },
-    
+    Unsubscribe { id: RequestId },
+
     ColdInitialReply { id: RequestId, tracker: TrackerId, delta: Delta },
     /// Sended when hyper edge not found
     ColdError { id: RequestId },
