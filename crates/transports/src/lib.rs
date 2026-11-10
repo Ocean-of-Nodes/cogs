@@ -275,15 +275,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
-    use protocol::HyperedgeId;
+    use protocol::Field;
     use tokio::net::TcpListener;
 
-    fn arg_a() -> HyperedgeId {
-        HyperedgeId::from_u128(0xa)
+    fn arg_a() -> HashMap<String, Field> {
+        HashMap::new()
     }
-    fn arg_b() -> HyperedgeId {
-        HyperedgeId::from_u128(0xb)
+    fn arg_b() -> HashMap<String, Field> {
+        HashMap::new()
     }
 
     fn sample_call() -> OutFrame {
