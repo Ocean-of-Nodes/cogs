@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::sync::watch;
 
 use db::*;
 use errors::*;
@@ -125,6 +126,7 @@ pub struct MaterializedGraph {
     id: SubId,
     graph: Arc<RwLock<Graph>>,
     updater: Option<JoinHandle<()>>,
+    notifier: watch::Sender<Option<Delta>>,
 }
 
 impl MaterializedGraph {
@@ -134,16 +136,20 @@ impl MaterializedGraph {
     ) -> Self {
         let graph = Arc::new(RwLock::new(Graph::default()));
         let graph_clone = Arc::clone(&graph);
+        let (notifier, _) = watch::channel(None);
 
+        let notifier_clone = notifier.clone();
         let updater = tokio::spawn(async move {
             while let Some(frame) = puller.recv().await {
                 match frame {
                     InFrame::SubscribeDelta { delta, .. } => {
                         let mut graph = graph_clone.write().await;
 
-                        if let Err(err) = graph.apply_delta(delta) {
+                        if let Err(err) = graph.apply_delta(delta.clone()) {
                             panic!("Failed to apply delta: {err:?}");
                         }
+
+                        notifier_clone.send(Some(delta)).expect("Failed to notify subscribers");
                     }
                     _ => unreachable!("MaterializedGraph should only receive SubscribeDelta frames"),
                 }
@@ -154,6 +160,7 @@ impl MaterializedGraph {
             id,
             graph,
             updater: Some(updater),
+            notifier,
         }
     }
 
@@ -162,6 +169,10 @@ impl MaterializedGraph {
             updater.abort();
             let _ = updater.await;
         }
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<Option<Delta>> {
+        self.notifier.subscribe()
     }
 
     pub async fn with_graph<R>(&self, f: impl FnOnce(&Graph) -> R) -> R {
