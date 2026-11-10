@@ -145,7 +145,7 @@ impl MaterializedGraph {
                             panic!("Failed to apply delta: {err:?}");
                         }
                     }
-                    _ => {}
+                    _ => unreachable!("MaterializedGraph should only receive SubscribeDelta frames"),
                 }
             }
         });
@@ -162,6 +162,11 @@ impl MaterializedGraph {
             updater.abort();
             let _ = updater.await;
         }
+    }
+
+    pub async fn with_graph<R>(&self, f: impl FnOnce(&Graph) -> R) -> R {
+        let graph = self.graph.read().await;
+        f(&graph)
     }
 }
 
@@ -211,12 +216,50 @@ impl Client {
                                     let _ = s.send(InFrame::CallReply { id, ret });
                                 }
                             }
-                            Ok(Some(_)) => {
-                                // TODO: route Subscribe* / Cold* frames to
-                                // the subscriptions registry once
-                                // materialized()/cold_view() are implemented.
-                            }
-                            Ok(None) | Err(_) => break,
+                            Ok(Some(InFrame::SubscribeError { id })) => {
+                                let waiter = _subs.lock().unwrap().remove(&id);
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::SubscribeError { id });
+                                }
+                            },
+                            Ok(Some(InFrame::SubscribeDelta { id, delta})) => {
+                                let waiter = _subs.lock().unwrap().get(&id).cloned();
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::SubscribeDelta { id, delta }).await;
+                                }
+                            },
+                            Ok(Some(InFrame::Unsubscribe { id })) => {
+                                let waiter = pending.lock().unwrap().remove(&id);
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::Unsubscribe { id });
+                                }
+                            },
+                            Ok(Some(InFrame::ColdInitialReply { id, tracker, delta })) => {
+                                let waiter = pending.lock().unwrap().remove(&id);
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::ColdInitialReply { id, tracker, delta });
+                                }
+                            },
+                            Ok(Some(InFrame::ColdError { id })) => {
+                                let waiter = pending.lock().unwrap().remove(&id);
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::ColdError { id });
+                                }
+                            },
+                            Ok(Some(InFrame::ColdUnsubscribe { id })) => {
+                                let waiter = pending.lock().unwrap().remove(&id);
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::ColdUnsubscribe { id });
+                                }
+                            },
+                            Ok(Some(InFrame::ColdDelta { id, delta })) => {
+                                let waiter = pending.lock().unwrap().remove(&id);
+                                if let Some(s) = waiter {
+                                    let _ = s.send(InFrame::ColdDelta { id, delta });
+                                }
+                            },
+                            Ok(None) => break,
+                            Err(err) => panic!("Transport error: {err:?}"),
                         },
                     }
                 }
